@@ -6,6 +6,9 @@ import {
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
+import type { ExtractedBusinessInfo } from "@/lib/server/interview/schema";
+
+export type { ExtractedBusinessInfo };
 
 export const sessionStatusEnum = pgEnum("session_status", ["active", "completed"]);
 export const messageRoleEnum = pgEnum("message_role", ["user", "assistant", "system"]);
@@ -44,18 +47,6 @@ export const messages = pgTable("messages", {
   content: text().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
-
-/**
- * AI の Structured Outputs で抽出する業務情報の型。
- * lib/server/interview/schema.ts の zod スキーマと一致させること。
- */
-export type ExtractedBusinessInfo = {
-  taskName: string | null;
-  purpose: string | null;
-  legalBasis: string | null;
-  stakeholders: string[];
-  steps: { id: string; label: string; order: number }[];
-};
 
 export const EMPTY_EXTRACTED: ExtractedBusinessInfo = {
   taskName: null,

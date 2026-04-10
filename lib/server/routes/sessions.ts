@@ -1,9 +1,16 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
 import { eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { sessions, messages } from "@/lib/db/schema";
+import { handleUserTurn } from "@/lib/server/interview/controller";
 import { questions } from "@/lib/server/interview/questions";
+
+const messageInputSchema = z.object({
+  content: z.string().min(1).max(4000),
+});
 
 export const sessionsRoute = new Hono()
   /**
@@ -47,4 +54,19 @@ export const sessionsRoute = new Hono()
     });
 
     return c.json({ session, messages: sessionMessages });
+  })
+  /**
+   * POST /api/sessions/:id/messages
+   * ユーザー発話を 1 ターン進める。
+   */
+  .post("/:id/messages", zValidator("json", messageInputSchema), async (c) => {
+    const id = c.req.param("id");
+    const { content } = c.req.valid("json");
+    try {
+      const result = await handleUserTurn({ sessionId: id, userInput: content });
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown error";
+      return c.json({ error: message }, 400);
+    }
   });
