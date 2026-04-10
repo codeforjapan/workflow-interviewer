@@ -69,4 +69,18 @@ export const sessionsRoute = new Hono()
       const message = err instanceof Error ? err.message : "unknown error";
       return c.json({ error: message }, 400);
     }
+  })
+  /**
+   * POST /api/sessions/:id/complete
+   * セッションを完了状態にして最終データを返す。
+   */
+  .post("/:id/complete", async (c) => {
+    const id = c.req.param("id");
+    const [updated] = await db
+      .update(sessions)
+      .set({ status: "completed" })
+      .where(eq(sessions.id, id))
+      .returning();
+    if (!updated) return c.json({ error: "session not found" }, 404);
+    return c.json({ session: updated });
   });
