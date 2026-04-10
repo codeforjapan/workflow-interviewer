@@ -66,8 +66,10 @@ export const sessionsRoute = new Hono()
       const result = await handleUserTurn({ sessionId: id, userInput: content });
       return c.json(result);
     } catch (err) {
+      console.error("[POST /sessions/:id/messages] failed", err);
       const message = err instanceof Error ? err.message : "unknown error";
-      return c.json({ error: message }, 400);
+      const cause = err instanceof Error && err.cause ? String(err.cause) : undefined;
+      return c.json({ error: message, cause }, 500);
     }
   })
   /**
