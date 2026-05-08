@@ -9,6 +9,14 @@ import {
 import type { ExtractedBusinessInfo } from "@/lib/server/interview/schema";
 
 export type { ExtractedBusinessInfo };
+export type FlowLayoutNode = { id: string; x: number; y: number };
+export type FlowLayoutEdge = { id: string; source: string; target: string };
+export type FlowLayoutGroup = { id: string; label: string; nodeIds: string[] };
+export type FlowLayout = {
+  nodes: FlowLayoutNode[];
+  edges: FlowLayoutEdge[];
+  groups: FlowLayoutGroup[];
+};
 
 export const sessionStatusEnum = pgEnum("session_status", ["active", "completed"]);
 export const messageRoleEnum = pgEnum("message_role", ["user", "assistant", "system"]);
@@ -30,6 +38,14 @@ export const sessions = pgTable("sessions", {
       legalBasis: null,
       stakeholders: [],
       steps: [],
+    }),
+  flowLayout: jsonb()
+    .$type<FlowLayout>()
+    .notNull()
+    .default({
+      nodes: [],
+      edges: [],
+      groups: [],
     }),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp({ withTimezone: true })

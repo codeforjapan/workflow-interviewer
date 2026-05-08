@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { InferSelectModel } from "drizzle-orm";
-import type { sessions, messages } from "@/lib/db/schema";
+import type { FlowLayout, sessions, messages } from "@/lib/db/schema";
 import { Transcript } from "@/components/chat/Transcript";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { FlowCanvas } from "@/components/canvas/FlowCanvas";
@@ -22,6 +22,10 @@ export function SessionView({
   const [session, setSession] = useState(initialSession);
   const [msgs, setMsgs] = useState(initialMessages);
   const [sending, setSending] = useState(false);
+  const [flowSaveState, setFlowSaveState] = useState<"idle" | "saving" | "error">("idle");
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const flowSaveTimerRef = useRef<number | null>(null);
+  const latestFlowLayoutRef = useRef<FlowLayout | null>(null);
 
   const isFinished = session.status === "completed";
   const allQuestionsAsked = session.currentQuestionIndex >= TOTAL_QUESTIONS;
@@ -51,6 +55,52 @@ export function SessionView({
 
   const [error, setError] = useState<string | null>(null);
 
+  const persistFlowLayout = useCallback(
+    async (layout: FlowLayout) => {
+      setFlowSaveState("saving");
+      try {
+        const res = await fetch(`/api/sessions/${session.id}/flow`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(layout),
+        });
+        if (!res.ok) {
+          throw new Error(`flow save failed: ${res.status}`);
+        }
+        const data = (await res.json()) as { session: Session };
+        setSession(data.session);
+        setFlowSaveState("idle");
+      } catch {
+        setFlowSaveState("error");
+      }
+    },
+    [session.id],
+  );
+
+  const handleFlowChange = useCallback(
+    (layout: FlowLayout) => {
+      latestFlowLayoutRef.current = layout;
+      setSession((prev) => ({ ...prev, flowLayout: layout }));
+      if (flowSaveTimerRef.current) {
+        window.clearTimeout(flowSaveTimerRef.current);
+      }
+      flowSaveTimerRef.current = window.setTimeout(() => {
+        const next = latestFlowLayoutRef.current;
+        if (!next) return;
+        void persistFlowLayout(next);
+      }, 400);
+    },
+    [persistFlowLayout],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (flowSaveTimerRef.current) {
+        window.clearTimeout(flowSaveTimerRef.current);
+      }
+    };
+  }, []);
+
   const sendMessage = async (content: string) => {
     setSending(true);
     setError(null);
@@ -75,6 +125,54 @@ export function SessionView({
     }
   };
 
+  const selectedNodeDetail = (() => {
+    if (!selectedNodeId) return null;
+    if (selectedNodeId === "task") {
+      return {
+        title: "業務概要ノード",
+        lines: [
+          `業務名: ${session.extractedData.taskName ?? "未抽出"}`,
+          `目的: ${session.extractedData.purpose ?? "未抽出"}`,
+          `根拠法令: ${session.extractedData.legalBasis ?? "未抽出"}`,
+          `関係者: ${session.extractedData.stakeholders.join("、") || "未抽出"}`,
+        ],
+      };
+    }
+    if (selectedNodeId.startsWith("group:")) {
+      const groupId = selectedNodeId.slice("group:".length);
+      const group = session.flowLayout.groups.find((item) => item.id === groupId);
+      return {
+        title: "グループノード",
+        lines: [
+          `グループ名: ${group?.label ?? "不明"}`,
+          `対象ノード数: ${group?.nodeIds.length ?? 0}`,
+          `対象ノードID: ${group?.nodeIds.join(", ") || "なし"}`,
+        ],
+      };
+    }
+    const sortedSteps = [...session.extractedData.steps].sort((a, b) => a.order - b.order);
+    const step = sortedSteps.find((item) => item.id === selectedNodeId);
+    if (!step) {
+      return {
+        title: "ノード詳細",
+        lines: [`ノードID: ${selectedNodeId}`, "このノードの詳細は見つかりませんでした。"],
+      };
+    }
+    return {
+      title: `ステップノード (${step.id})`,
+      lines: [
+        `順序: ${step.order}`,
+        `ラベル: ${step.label}`,
+        `関連グループ: ${
+          session.flowLayout.groups
+            .filter((group) => group.nodeIds.includes(step.id))
+            .map((group) => group.label)
+            .join("、") || "なし"
+        }`,
+      ],
+    };
+  })();
+
   return (
     <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b bg-white px-6 py-3 dark:bg-zinc-950">
@@ -84,6 +182,10 @@ export function SessionView({
             セッション {session.id} ・ 進捗 {session.currentQuestionIndex} / {TOTAL_QUESTIONS}
             {isFinished && " ・ 完了"}
           </p>
+          {flowSaveState === "saving" && <p className="text-xs text-zinc-500">フローを保存中...</p>}
+          {flowSaveState === "error" && (
+            <p className="text-xs text-red-600 dark:text-red-400">フローの保存に失敗しました</p>
+          )}
         </div>
         <div className="flex gap-2">
           {isFinished ? (
@@ -98,7 +200,7 @@ export function SessionView({
         </div>
       </header>
       <div className="grid flex-1 grid-cols-1 overflow-hidden md:grid-cols-2">
-        <section className="flex flex-col border-r">
+        <section className="flex min-h-0 flex-col border-r">
           <Transcript messages={msgs} />
           {error && (
             <div className="border-t bg-red-50 px-4 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
@@ -108,9 +210,39 @@ export function SessionView({
           <ChatInput onSend={sendMessage} disabled={sending || isFinished} />
         </section>
         <section className="relative">
-          <FlowCanvas extracted={session.extractedData} />
+          <FlowCanvas
+            extracted={session.extractedData}
+            flowLayout={session.flowLayout}
+            onFlowChange={handleFlowChange}
+            onNodeSelect={setSelectedNodeId}
+          />
         </section>
       </div>
+      {selectedNodeDetail && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setSelectedNodeId(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-base font-semibold">{selectedNodeDetail.title}</h2>
+            <div className="mt-3 space-y-2 text-sm text-zinc-700 dark:text-zinc-200">
+              {selectedNodeDetail.lines.map((line) => (
+                <p key={line} className="whitespace-pre-wrap">
+                  {line}
+                </p>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <Button variant="outline" onClick={() => setSelectedNodeId(null)}>
+                閉じる
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

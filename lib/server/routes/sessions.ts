@@ -11,6 +11,31 @@ import { questions } from "@/lib/server/interview/questions";
 const messageInputSchema = z.object({
   content: z.string().min(1).max(4000),
 });
+const flowLayoutSchema = z.object({
+  nodes: z.array(
+    z.object({
+      id: z.string().min(1),
+      x: z.number().finite(),
+      y: z.number().finite(),
+    }),
+  ),
+  edges: z.array(
+    z.object({
+      id: z.string().min(1),
+      source: z.string().min(1),
+      target: z.string().min(1),
+    }),
+  ),
+  groups: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        label: z.string().min(1),
+        nodeIds: z.array(z.string().min(1)),
+      }),
+    )
+    .default([]),
+});
 
 export const sessionsRoute = new Hono()
   /**
@@ -71,6 +96,29 @@ export const sessionsRoute = new Hono()
       const cause = err instanceof Error && err.cause ? String(err.cause) : undefined;
       return c.json({ error: message, cause }, 500);
     }
+  })
+  /**
+   * PATCH /api/sessions/:id/flow
+   * 手動編集されたフロー図のレイアウト・接続を保存する。
+   */
+  .patch("/:id/flow", zValidator("json", flowLayoutSchema), async (c) => {
+    const id = c.req.param("id");
+    const flowLayout = c.req.valid("json");
+    const nodeIds = new Set(flowLayout.nodes.map((n) => n.id));
+    const hasInvalidEdge = flowLayout.edges.some(
+      (edge) => !nodeIds.has(edge.source) || !nodeIds.has(edge.target),
+    );
+    if (hasInvalidEdge) {
+      return c.json({ error: "edge source/target must exist in nodes" }, 400);
+    }
+
+    const [updated] = await db
+      .update(sessions)
+      .set({ flowLayout })
+      .where(eq(sessions.id, id))
+      .returning();
+    if (!updated) return c.json({ error: "session not found" }, 404);
+    return c.json({ session: updated });
   })
   /**
    * POST /api/sessions/:id/complete

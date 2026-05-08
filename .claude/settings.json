@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(supabase init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres pnpm drizzle-kit generate --name init)",
+      "Bash(ls /Users/kur0/Developments/works/workflow-interviewer/node_modules/hono/dist/vercel.*)",
+      "Bash(pnpm exec:*)",
+      "Bash(DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres OPENAI_API_KEY=sk-test pnpm build)",
+      "Bash(supabase start:*)",
+      "Bash(open -a Docker)"
+    ]
+  }
+}

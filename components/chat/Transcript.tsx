@@ -16,7 +16,7 @@ export function Transcript({ messages }: { messages: Message[] }) {
   }, [messages.length]);
 
   return (
-    <ScrollArea className="flex-1">
+    <ScrollArea className="min-h-0 flex-1">
       <div className="flex flex-col gap-3 p-4">
         {messages.map((m) => (
           <div
