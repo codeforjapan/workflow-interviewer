@@ -45,3 +45,6 @@ supabase/.env
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# tmp
+docs/workflow/
