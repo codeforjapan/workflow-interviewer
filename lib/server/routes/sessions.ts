@@ -7,6 +7,7 @@ import { db } from "@/lib/db/client";
 import { sessions, messages } from "@/lib/db/schema";
 import { handleUserTurn } from "@/lib/server/interview/controller";
 import { questions } from "@/lib/server/interview/questions";
+import { generateAdaptiveQuestion } from "@/lib/server/interview/followup";
 
 const messageInputSchema = z.object({
   content: z.string().min(1).max(4000),
@@ -49,7 +50,15 @@ export const sessionsRoute = new Hono()
       .values({ id })
       .returning();
 
-    const opener = `${questions.opener}\n\n${questions.list[0]}`;
+    const firstQuestion = await generateAdaptiveQuestion({
+      sessionId: id,
+      sessionStatus: session.status,
+      guideQuestion: questions.list[0],
+      questionIndex: 0,
+      conversation: [],
+      extracted: session.extractedData,
+    });
+    const opener = `${questions.opener}\n\n${firstQuestion}`;
     const [firstMessage] = await db
       .insert(messages)
       .values({

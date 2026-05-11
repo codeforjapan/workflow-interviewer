@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
 import { messages, sessions } from "@/lib/db/schema";
 import { extractBusinessInfo } from "./extract";
+import { generateAdaptiveQuestion } from "./followup";
 import { questions, TOTAL_QUESTIONS } from "./questions";
 
 /**
@@ -47,7 +48,18 @@ export async function handleUserTurn(params: {
   // 3. 次の assistant メッセージを決定
   const nextIndex = session.currentQuestionIndex + 1;
   const isFinished = nextIndex >= TOTAL_QUESTIONS;
-  const nextContent = isFinished ? questions.closing : questions.list[nextIndex];
+  const nextContent = isFinished
+    ? questions.closing
+    : await generateAdaptiveQuestion({
+        sessionId,
+        sessionStatus: session.status,
+        guideQuestion: questions.list[nextIndex],
+        questionIndex: nextIndex,
+        conversation: conversation
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+        extracted: updatedExtracted,
+      });
 
   await db.insert(messages).values({
     id: nanoid(12),
