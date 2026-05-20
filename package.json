@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check:kb": "tsx scripts/check-kb-parser.ts"
+    "check:kb": "tsx scripts/check-kb-parser.ts",
+    "check:slots": "tsx scripts/check-slots.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
