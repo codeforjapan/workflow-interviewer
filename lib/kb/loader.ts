@@ -69,6 +69,60 @@ export async function loadIncidentByPath(
 }
 
 /**
+ * workflows/_standardized-20/ 配下の全業務のメタ情報を返す。
+ * - displayName は flow-standard.md の `# ...` H1 から「標準業務フロー」サフィックスを除いた文字列
+ * - 一覧表示 UI (D1) で使う前提。失敗した業務はスキップする (堅牢性優先)
+ */
+export type WorkflowMeta = {
+  slug: string;
+  displayName: string;
+  psidServiceCategory: string;
+  psidLifecycle: string[];
+  specRef: string;
+};
+
+const WORKFLOW_TITLE_RE = /^#\s+(.+?)\s*$/m;
+const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n/;
+
+function extractDisplayName(raw: string, slug: string): string {
+  // gray-matter の frontmatter 内に `# 依存関係` 等のコメント風行が含まれる KB があるため、
+  // frontmatter ブロックを落としてから H1 を探す
+  const body = raw.replace(FRONTMATTER_RE, "");
+  const m = body.match(WORKFLOW_TITLE_RE);
+  if (!m) return slug;
+  return m[1].replace(/\s*標準業務フロー\s*$/, "").trim() || slug;
+}
+
+export async function listAllWorkflows(): Promise<WorkflowMeta[]> {
+  const entries = await readdir(KB_ROOT, { withFileTypes: true });
+  const slugs = entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith("_"))
+    .map((e) => e.name)
+    .sort();
+  const results = await Promise.all(
+    slugs.map(async (slug): Promise<WorkflowMeta | null> => {
+      try {
+        const wf = await loadWorkflowBySlug(slug);
+        const fm = wf.flowStandard.frontmatter;
+        const lifecycle = Array.isArray(fm.psid_lifecycle)
+          ? fm.psid_lifecycle
+          : [fm.psid_lifecycle];
+        return {
+          slug,
+          displayName: extractDisplayName(wf.flowStandard.raw, slug),
+          psidServiceCategory: fm.psid_service_category,
+          psidLifecycle: lifecycle,
+          specRef: fm.spec_ref,
+        };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return results.filter((r): r is WorkflowMeta => r !== null);
+}
+
+/**
  * concepts/<slug>.md を読み込む。slug = "household" / "income" など。
  */
 export async function loadConceptBySlug(slug: string): Promise<ParsedConceptDoc> {

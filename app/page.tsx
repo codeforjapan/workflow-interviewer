@@ -1,12 +1,25 @@
 import { desc } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { sessions } from "@/lib/db/schema";
+import { listAllWorkflows } from "@/lib/kb/loader";
 import { DashboardClient } from "@/components/dashboard/DashboardClient";
 
+// D1: MVP では inkan-toroku のみがアクティブ。他の業務は未対応 badge で表示。
+const SUPPORTED_SLUGS = new Set(["inkan-toroku"]);
+
 export default async function Home() {
-  const allSessions = await db.query.sessions.findMany({
-    orderBy: desc(sessions.createdAt),
-  });
+  const [allSessions, workflows] = await Promise.all([
+    db.query.sessions.findMany({ orderBy: desc(sessions.createdAt) }),
+    listAllWorkflows(),
+  ]);
+
+  const workflowOptions = workflows
+    .map((w) => ({ ...w, supported: SUPPORTED_SLUGS.has(w.slug) }))
+    // サポート済みを先頭に、その後はスラッグ順
+    .sort((a, b) => {
+      if (a.supported !== b.supported) return a.supported ? -1 : 1;
+      return a.slug.localeCompare(b.slug);
+    });
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
@@ -17,7 +30,7 @@ export default async function Home() {
             AI が業務についてヒアリングし、その場でフロー図を生成します。
           </p>
         </div>
-        <DashboardClient sessions={allSessions} />
+        <DashboardClient sessions={allSessions} workflows={workflowOptions} />
       </div>
     </div>
   );
