@@ -1,11 +1,58 @@
 import { z } from "zod";
 
 /**
+ * 業務間/部署/外部機関へのリンク。
+ * step が他のワークフロー・部署・システム等とどうつながるかを表現する。
+ * fromStepId が null の場合はワークフロー全体のレベルのリンク（KB seed 由来など）。
+ */
+export const ConnectionSchema = z.object({
+  id: z.string(),
+  fromStepId: z.string().nullable(),
+  target: z.object({
+    type: z.enum(["workflow", "department", "external", "system"]),
+    label: z.string(),
+    ref: z.string().nullable(),
+  }),
+  note: z.string().nullable(),
+});
+
+export type Connection = z.infer<typeof ConnectionSchema>;
+
+/**
+ * 例外フロー。通常フローから派生する条件付きの分岐。
+ */
+export const ExceptionSchema = z.object({
+  id: z.string(),
+  relatedStepId: z.string(),
+  label: z.string(),
+  condition: z.string(),
+  frequency: z.string().nullable(),
+});
+
+export type Exception = z.infer<typeof ExceptionSchema>;
+
+/**
+ * インシデント候補（ヒヤリハットや過去事象）。
+ */
+export const IncidentSchema = z.object({
+  id: z.string(),
+  relatedStepId: z.string().nullable(),
+  scenario: z.string(),
+  severity: z.enum(["low", "medium", "high"]),
+  knownIncidentRef: z.string().nullable(),
+});
+
+export type Incident = z.infer<typeof IncidentSchema>;
+
+/**
  * Structured Outputs で抽出する業務情報。
  * lib/db/schema.ts の ExtractedBusinessInfo 型と一致させる。
  *
  * Structured Outputs は nullable を許すが optional は不可。
  * 不明値は明示的に null / 空配列を返させる。
+ *
+ * B2 から connections / exceptions / incidents も LLM で抽出する。
+ * gaps は C1/C2 で KB マッチにより派生する別経路のため、ここでは扱わない。
  */
 export const ExtractedBusinessInfoSchema = z.object({
   taskName: z.string().nullable(),
@@ -19,43 +66,17 @@ export const ExtractedBusinessInfoSchema = z.object({
       order: z.number().int(),
     }),
   ),
+  connections: z.array(ConnectionSchema),
+  exceptions: z.array(ExceptionSchema),
+  incidents: z.array(IncidentSchema),
 });
 
 export type ExtractedBusinessInfo = z.infer<typeof ExtractedBusinessInfoSchema>;
 
 /**
- * 業務間/部署/外部機関へのリンク。
- * step が他のワークフロー・部署・システム等とどうつながるかを表現する。
- */
-export const ConnectionSchema = z.object({
-  id: z.string(),
-  fromStepId: z.string(),
-  target: z.object({
-    type: z.enum(["workflow", "department", "external", "system"]),
-    label: z.string(),
-    ref: z.string().optional(),
-  }),
-  note: z.string().optional(),
-});
-
-export type Connection = z.infer<typeof ConnectionSchema>;
-
-/**
- * 例外フロー。通常フローから派生する条件付きの分岐。
- */
-export const ExceptionSchema = z.object({
-  id: z.string(),
-  relatedStepId: z.string(),
-  label: z.string(),
-  condition: z.string(),
-  frequency: z.string().optional(),
-});
-
-export type Exception = z.infer<typeof ExceptionSchema>;
-
-/**
  * 標準フローと現場フローのギャップ。
  * KB の既知ギャップにマッチした場合は matchedKnownGap に gap-notes の参照を持つ。
+ * gaps は LLM ではなく C1/C2 の KB マッチング/差分計算で埋まる。
  */
 export const ExtractedGapSchema = z.object({
   id: z.string(),
@@ -70,30 +91,11 @@ export const ExtractedGapSchema = z.object({
 export type ExtractedGap = z.infer<typeof ExtractedGapSchema>;
 
 /**
- * インシデント候補（ヒヤリハットや過去事象）。
- */
-export const IncidentSchema = z.object({
-  id: z.string(),
-  relatedStepId: z.string().optional(),
-  scenario: z.string(),
-  severity: z.enum(["low", "medium", "high"]),
-  knownIncidentRef: z.string().optional(),
-});
-
-export type Incident = z.infer<typeof IncidentSchema>;
-
-/**
  * DB の sessions.extractedData が持つ完全形。
- * LLM 抽出（ExtractedBusinessInfo）に connections/exceptions/gaps/incidents を加えたもの。
- *
- * これらの新フィールドは A3 時点では LLM では抽出せず、B2 以降で順次埋める。
- * 既存セッションとの後方互換のため空配列をデフォルトとする。
+ * LLM 抽出（ExtractedBusinessInfo）に gaps を加えたもの。
  */
 export const SessionExtractedDataSchema = ExtractedBusinessInfoSchema.extend({
-  connections: z.array(ConnectionSchema),
-  exceptions: z.array(ExceptionSchema),
   gaps: z.array(ExtractedGapSchema),
-  incidents: z.array(IncidentSchema),
 });
 
 export type SessionExtractedData = z.infer<typeof SessionExtractedDataSchema>;
