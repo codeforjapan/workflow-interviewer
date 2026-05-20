@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import type { InferSelectModel } from "drizzle-orm";
+import { ArrowLeftIcon } from "lucide-react";
 import type { FlowLayout, sessions, messages } from "@/lib/db/schema";
 import { Transcript } from "@/components/chat/Transcript";
 import { ChatInput } from "@/components/chat/ChatInput";
@@ -217,7 +219,16 @@ export function SessionView({
   return (
     <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b bg-white px-6 py-3 dark:bg-zinc-950">
-        <div>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            title="トップへ戻る"
+          >
+            <ArrowLeftIcon className="size-3" />
+            トップ
+          </Link>
+          <div>
           <h1 className="text-lg font-semibold">
             業務インタビュー{readonly && " (読み取り専用)"}
           </h1>
@@ -231,6 +242,7 @@ export function SessionView({
           {!readonly && flowSaveState === "error" && (
             <p className="text-xs text-red-600 dark:text-red-400">フローの保存に失敗しました</p>
           )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {!readonly && <ShareUrlBox sessionId={session.id} />}

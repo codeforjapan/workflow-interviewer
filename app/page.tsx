@@ -4,22 +4,18 @@ import { sessions } from "@/lib/db/schema";
 import { listAllWorkflows } from "@/lib/kb/loader";
 import { DashboardClient } from "@/components/dashboard/DashboardClient";
 
-// D1: MVP では inkan-toroku のみがアクティブ。他の業務は未対応 badge で表示。
-const SUPPORTED_SLUGS = new Set(["inkan-toroku"]);
-
 export default async function Home() {
   const [allSessions, workflows] = await Promise.all([
     db.query.sessions.findMany({ orderBy: desc(sessions.createdAt) }),
     listAllWorkflows(),
   ]);
 
+  // KB に flow-standard.md がある業務は全て選択可能にする。
+  // KB authoring 状況により creates_risks / gap-notes 等が未整備の業務でも、
+  // パイプライン側 (B2/B3/C1/C2) は欠落時に passthrough する設計なので動作する。
   const workflowOptions = workflows
-    .map((w) => ({ ...w, supported: SUPPORTED_SLUGS.has(w.slug) }))
-    // サポート済みを先頭に、その後はスラッグ順
-    .sort((a, b) => {
-      if (a.supported !== b.supported) return a.supported ? -1 : 1;
-      return a.slug.localeCompare(b.slug);
-    });
+    .map((w) => ({ ...w, supported: true }))
+    .sort((a, b) => a.slug.localeCompare(b.slug));
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
