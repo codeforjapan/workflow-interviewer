@@ -8,6 +8,7 @@ import { ChatInput } from "@/components/chat/ChatInput";
 import { FlowCanvas } from "@/components/canvas/FlowCanvas";
 import { Button } from "@/components/ui/button";
 import { CautionBar } from "@/components/session/CautionBar";
+import { ShareUrlBox } from "@/components/session/ShareUrlBox";
 import {
   StandardFlowPanel,
   type StandardFlowSummary,
@@ -23,10 +24,13 @@ export function SessionView({
   initialSession,
   initialMessages,
   standardFlow,
+  readonly = false,
 }: {
   initialSession: Session;
   initialMessages: Message[];
   standardFlow: StandardFlowSummary | null;
+  /** D4: 共有用 /sessions/[id]/view からの呼び出し時に編集系 UI を全て隠す */
+  readonly?: boolean;
 }) {
   const [session, setSession] = useState(initialSession);
   const [msgs, setMsgs] = useState(initialMessages);
@@ -207,18 +211,23 @@ export function SessionView({
     <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b bg-white px-6 py-3 dark:bg-zinc-950">
         <div>
-          <h1 className="text-lg font-semibold">業務インタビュー</h1>
+          <h1 className="text-lg font-semibold">
+            業務インタビュー{readonly && " (読み取り専用)"}
+          </h1>
           <p className="text-xs text-zinc-500">
             セッション {session.id} ・ ターン {Math.min(session.currentQuestionIndex, MAX_TURNS)} / {MAX_TURNS}
             {isFinished && " ・ 完了"}
           </p>
-          {flowSaveState === "saving" && <p className="text-xs text-zinc-500">フローを保存中...</p>}
-          {flowSaveState === "error" && (
+          {!readonly && flowSaveState === "saving" && (
+            <p className="text-xs text-zinc-500">フローを保存中...</p>
+          )}
+          {!readonly && flowSaveState === "error" && (
             <p className="text-xs text-red-600 dark:text-red-400">フローの保存に失敗しました</p>
           )}
         </div>
-        <div className="flex gap-2">
-          {!isFinished && (
+        <div className="flex items-center gap-2">
+          {!readonly && <ShareUrlBox sessionId={session.id} />}
+          {!readonly && !isFinished && (
             <Button
               variant="outline"
               onClick={recomputeGaps}
@@ -231,13 +240,18 @@ export function SessionView({
                   : "ギャップ更新"}
             </Button>
           )}
-          {isFinished ? (
+          {!readonly && (isFinished ? (
             <Button variant="outline" onClick={() => downloadJson(session)}>
               JSON を再ダウンロード
             </Button>
           ) : (
             <Button onClick={completeSession} disabled={!allQuestionsAsked}>
               完了して JSON 出力
+            </Button>
+          ))}
+          {readonly && (
+            <Button variant="outline" onClick={() => downloadJson(session)}>
+              JSON をダウンロード
             </Button>
           )}
         </div>
@@ -276,12 +290,14 @@ export function SessionView({
           className={`min-h-0 flex-col border-r ${activeTab === "chat" ? "flex" : "hidden"} lg:flex`}
         >
           <Transcript messages={msgs} />
-          {error && (
+          {!readonly && error && (
             <div className="border-t bg-red-50 px-4 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
               {error}
             </div>
           )}
-          <ChatInput onSend={sendMessage} disabled={sending || isFinished} />
+          {!readonly && (
+            <ChatInput onSend={sendMessage} disabled={sending || isFinished} />
+          )}
         </section>
         <section
           className={`relative ${activeTab === "canvas" ? "block" : "hidden"} lg:block`}
@@ -289,8 +305,9 @@ export function SessionView({
           <FlowCanvas
             extracted={session.extractedData}
             flowLayout={session.flowLayout}
-            onFlowChange={handleFlowChange}
+            onFlowChange={readonly ? undefined : handleFlowChange}
             onNodeSelect={setSelectedNodeId}
+            readonly={readonly}
           />
         </section>
       </div>
