@@ -52,7 +52,14 @@ export function SessionView({
     if (!res.ok) return;
     const data = (await res.json()) as { session: Session };
     setSession(data.session);
-    downloadJson(data.session);
+    // D5: 完了時に Markdown レポート + 拡張 JSON を順番にダウンロード
+    triggerExportDownload(data.session.id, "md");
+    triggerExportDownload(data.session.id, "json");
+  };
+
+  const downloadReports = () => {
+    triggerExportDownload(session.id, "md");
+    triggerExportDownload(session.id, "json");
   };
 
   const recomputeGaps = async () => {
@@ -72,19 +79,19 @@ export function SessionView({
     }
   };
 
-  const downloadJson = (s: Session) => {
-    const payload = {
-      sessionId: s.id,
-      completedAt: s.updatedAt,
-      data: s.extractedData,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
+  /**
+   * 共通: /api/sessions/:id/export?format=... を <a download> でフェッチして
+   * ブラウザのダウンロードフローに乗せる。
+   */
+  const triggerExportDownload = (sessionId: string, format: "md" | "json") => {
     const a = document.createElement("a");
-    a.href = url;
-    a.download = `session-${s.id}.json`;
+    a.href = `/api/sessions/${sessionId}/export?format=${format}`;
+    // server 側で Content-Disposition: attachment を付けているので download 属性は補助
+    a.download = "";
+    a.rel = "noopener";
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
   };
 
   const [error, setError] = useState<string | null>(null);
@@ -241,17 +248,17 @@ export function SessionView({
             </Button>
           )}
           {!readonly && (isFinished ? (
-            <Button variant="outline" onClick={() => downloadJson(session)}>
-              JSON を再ダウンロード
+            <Button variant="outline" onClick={downloadReports}>
+              レポート再ダウンロード
             </Button>
           ) : (
             <Button onClick={completeSession} disabled={!allQuestionsAsked}>
-              完了して JSON 出力
+              完了してレポート出力
             </Button>
           ))}
           {readonly && (
-            <Button variant="outline" onClick={() => downloadJson(session)}>
-              JSON をダウンロード
+            <Button variant="outline" onClick={downloadReports}>
+              レポートをダウンロード
             </Button>
           )}
         </div>
