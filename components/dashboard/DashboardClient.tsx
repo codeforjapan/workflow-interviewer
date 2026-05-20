@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SessionCard } from "./SessionCard";
 import { FlowPreviewDialog } from "./FlowPreviewDialog";
-import { NewSessionButton } from "./NewSessionButton";
+import { WorkflowPickerButton, type WorkflowOption } from "./WorkflowPickerButton";
 import type { ExtractedBusinessInfo, FlowLayout } from "@/lib/db/schema";
 
 const CATEGORIES = [
@@ -31,9 +31,10 @@ interface Session {
 
 interface DashboardClientProps {
   sessions: Session[];
+  workflows: WorkflowOption[];
 }
 
-export function DashboardClient({ sessions }: DashboardClientProps) {
+export function DashboardClient({ sessions, workflows }: DashboardClientProps) {
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("すべて");
   const [previewSessionId, setPreviewSessionId] = useState<string | null>(null);
@@ -62,7 +63,7 @@ export function DashboardClient({ sessions }: DashboardClientProps) {
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
         />
-        <NewSessionButton />
+        <WorkflowPickerButton workflows={workflows} />
       </div>
 
       {/* Category filter */}
