@@ -24,6 +24,9 @@ export function SessionView({
   const [msgs, setMsgs] = useState(initialMessages);
   const [sending, setSending] = useState(false);
   const [flowSaveState, setFlowSaveState] = useState<"idle" | "saving" | "error">("idle");
+  const [gapRecomputeState, setGapRecomputeState] = useState<"idle" | "running" | "error">(
+    "idle",
+  );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const flowSaveTimerRef = useRef<number | null>(null);
   const latestFlowLayoutRef = useRef<FlowLayout | null>(null);
@@ -37,6 +40,23 @@ export function SessionView({
     const data = (await res.json()) as { session: Session };
     setSession(data.session);
     downloadJson(data.session);
+  };
+
+  const recomputeGaps = async () => {
+    if (gapRecomputeState === "running") return;
+    setGapRecomputeState("running");
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/gap-recompute`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const data = (await res.json()) as { session: Session };
+      setSession(data.session);
+      setGapRecomputeState("idle");
+    } catch (e) {
+      console.error("[recomputeGaps] failed", e);
+      setGapRecomputeState("error");
+    }
   };
 
   const downloadJson = (s: Session) => {
@@ -189,6 +209,19 @@ export function SessionView({
           )}
         </div>
         <div className="flex gap-2">
+          {!isFinished && (
+            <Button
+              variant="outline"
+              onClick={recomputeGaps}
+              disabled={gapRecomputeState === "running"}
+            >
+              {gapRecomputeState === "running"
+                ? "ギャップ計算中..."
+                : gapRecomputeState === "error"
+                  ? "ギャップ更新 (再試行)"
+                  : "ギャップ更新"}
+            </Button>
+          )}
           {isFinished ? (
             <Button variant="outline" onClick={() => downloadJson(session)}>
               JSON を再ダウンロード

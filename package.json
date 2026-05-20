@@ -13,7 +13,8 @@
     "check:risks": "tsx scripts/check-risks.ts",
     "check:cautions": "tsx scripts/check-cautions.ts",
     "check:gap-match": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-match.ts",
-    "check:gap-diff": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-diff.ts"
+    "check:gap-diff": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-diff.ts",
+    "check:gap-recompute": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-recompute.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
