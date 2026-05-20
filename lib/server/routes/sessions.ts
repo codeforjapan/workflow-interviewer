@@ -7,6 +7,8 @@ import { db } from "@/lib/db/client";
 import { sessions, messages } from "@/lib/db/schema";
 import { detectCautionFlagsForExtracted } from "@/lib/server/interview/cautions";
 import { handleUserTurn } from "@/lib/server/interview/controller";
+import { buildJsonReport } from "@/lib/server/export/json";
+import { buildMarkdownReport } from "@/lib/server/export/markdown";
 import { recomputeGaps } from "@/lib/server/gap/recompute";
 import { questions } from "@/lib/server/interview/questions";
 import { SLOT_DEFS } from "@/lib/server/interview/slots";
@@ -166,6 +168,45 @@ export const sessionsRoute = new Hono()
       const cause = err instanceof Error && err.cause ? String(err.cause) : undefined;
       return c.json({ error: message, cause }, 500);
     }
+  })
+  /**
+   * GET /api/sessions/:id/export?format=md|json
+   * D5: KB local 規約に沿った Markdown / 拡張 JSON レポートを返す。
+   * クライアント側のダウンロード用に Content-Disposition: attachment を付与。
+   */
+  .get("/:id/export", async (c) => {
+    const id = c.req.param("id");
+    const format = c.req.query("format") ?? "json";
+    const session = await db.query.sessions.findFirst({
+      where: eq(sessions.id, id),
+    });
+    if (!session) return c.json({ error: "session not found" }, 404);
+
+    if (format === "md" || format === "markdown") {
+      const { filename, content } = buildMarkdownReport(
+        session,
+        session.extractedData,
+      );
+      return new Response(content, {
+        headers: {
+          "content-type": "text/markdown; charset=utf-8",
+          "content-disposition": `attachment; filename="${filename}"`,
+        },
+      });
+    }
+    if (format === "json") {
+      const { filename, content } = buildJsonReport(
+        session,
+        session.extractedData,
+      );
+      return new Response(content, {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "content-disposition": `attachment; filename="${filename}"`,
+        },
+      });
+    }
+    return c.json({ error: `unknown format: ${format}` }, 400);
   })
   /**
    * POST /api/sessions/:id/gap-recompute
