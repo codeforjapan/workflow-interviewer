@@ -1,12 +1,15 @@
 import matter from "gray-matter";
 import { parseMermaidFlowchart } from "./mermaid";
 import {
+  ConceptFrontmatterSchema,
   FlowStandardFrontmatterSchema,
   GapNotesFrontmatterSchema,
   IncidentFrontmatterSchema,
+  type ConceptSection,
   type Gap,
   type GapSection,
   type IncidentSection,
+  type ParsedConceptDoc,
   type ParsedFlowStandard,
   type ParsedGapNotes,
   type ParsedIncidentDoc,
@@ -159,4 +162,37 @@ export function parseIncidentDoc(markdown: string): ParsedIncidentDoc {
   }
 
   return { frontmatter, whatHappens, sections, raw: markdown };
+}
+
+/**
+ * concepts/*.md をパースする。全 H2 セクションを順序保持で抽出。
+ */
+export function parseConceptDoc(markdown: string): ParsedConceptDoc {
+  const parsed = matter(markdown);
+  const frontmatter = ConceptFrontmatterSchema.parse(parsed.data);
+  const content = parsed.content;
+
+  const positions: Array<{ start: number; headerEnd: number; heading: string }> =
+    [];
+  H2_HEADING.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = H2_HEADING.exec(content)) !== null) {
+    positions.push({
+      start: m.index,
+      headerEnd: m.index + m[0].length,
+      heading: m[1].trim(),
+    });
+  }
+
+  const sections: ConceptSection[] = [];
+  for (let i = 0; i < positions.length; i += 1) {
+    const cur = positions[i];
+    const next = positions[i + 1];
+    const body = content
+      .slice(cur.headerEnd, next ? next.start : content.length)
+      .trim();
+    sections.push({ heading: cur.heading, body });
+  }
+
+  return { frontmatter, sections, raw: markdown };
 }

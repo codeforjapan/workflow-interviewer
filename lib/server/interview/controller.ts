@@ -2,6 +2,7 @@ import { eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
 import { messages, sessions } from "@/lib/db/schema";
+import { detectCautionFlagsForExtracted } from "./cautions";
 import { extractBusinessInfo } from "./extract";
 import { generateAdaptiveQuestion } from "./followup";
 import { questions } from "./questions";
@@ -57,9 +58,16 @@ export async function handleUserTurn(params: {
   });
   // LLM は connections / exceptions / incidents まで抽出する (B2)。
   // gaps は C1/C2 の KB マッチ経由で埋まる別経路のため、ここではセッションの既存値を保持。
+  // cautionFlags は B4 の後処理で常に再計算する。
+  const cautionFlags = await detectCautionFlagsForExtracted({
+    ...llmExtracted,
+    gaps: session.extractedData.gaps,
+    cautionFlags: [],
+  });
   const updatedExtracted = {
     ...llmExtracted,
     gaps: session.extractedData.gaps,
+    cautionFlags,
   };
 
   // 3. スロット駆動で次の発話を決定
