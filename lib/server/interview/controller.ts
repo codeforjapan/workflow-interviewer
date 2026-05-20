@@ -2,6 +2,7 @@ import { eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
 import { messages, sessions } from "@/lib/db/schema";
+import { matchKnownGaps } from "@/lib/server/gap/match";
 import { detectCautionFlagsForExtracted } from "./cautions";
 import { extractBusinessInfo } from "./extract";
 import { generateAdaptiveQuestion } from "./followup";
@@ -57,16 +58,28 @@ export async function handleUserTurn(params: {
     current: session.extractedData,
   });
   // LLM は connections / exceptions / incidents まで抽出する (B2)。
-  // gaps は C1/C2 の KB マッチ経由で埋まる別経路のため、ここではセッションの既存値を保持。
+  // gaps は C1 (既知ギャップ照合) で埋める。matchedKnownGap 付きで蓄積。
   // cautionFlags は B4 の後処理で常に再計算する。
+  const conversationForLlm = conversation
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+  const matchedGaps = await matchKnownGaps({
+    slug: session.taskSlug ?? "",
+    extracted: {
+      ...llmExtracted,
+      gaps: session.extractedData.gaps,
+      cautionFlags: [],
+    },
+    conversation: conversationForLlm,
+  });
   const cautionFlags = await detectCautionFlagsForExtracted({
     ...llmExtracted,
-    gaps: session.extractedData.gaps,
+    gaps: matchedGaps,
     cautionFlags: [],
   });
   const updatedExtracted = {
     ...llmExtracted,
-    gaps: session.extractedData.gaps,
+    gaps: matchedGaps,
     cautionFlags,
   };
 
