@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Workflow Interviewer
 
-## Getting Started
+自治体職員の暗黙知を可視化する AI インタビューアプリ。
+AI が業務についてヒアリングし、その場で React Flow キャンバス上にフロー図を生成する。
 
-First, run the development server:
+> Sprint 0-1 (MVP v0.1) の段階。テキストチャットのみ・固定 5 問の業務概要把握フェーズ。
+
+## スタック
+
+- Next.js 16 (App Router) / React 19 / Tailwind v4 / shadcn
+- Hono (`app/api/[[...route]]`) + Drizzle ORM + ローカル Supabase (Postgres)
+- OpenAI Structured Outputs (zod) で業務情報を抽出
+- @xyflow/react でフロー図を描画
+
+## セットアップ
+
+前提: Node 20+ / pnpm / Docker (Supabase ローカル用) / [Supabase CLI](https://supabase.com/docs/guides/cli)
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+
+# ローカル Supabase を起動 (初回はイメージ pull で数分)
+supabase start
+
+# .env.local を作成
+cp .env.example .env.local
+# OPENAI_API_KEY と、supabase status の Anon key を埋める
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`DATABASE_URL` は `supabase status` の DB URL（デフォルトで `.env.example` の値と一致）。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### マイグレーション適用
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+pnpm drizzle-kit migrate
+```
 
-## Learn More
+### 開発サーバー起動
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+pnpm dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+[http://localhost:3000](http://localhost:3000) を開く。
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 動作確認 (Sprint 0-1 受け入れシナリオ)
 
-## Deploy on Vercel
+1. トップで「新しいセッションを開始」
+2. AI から最初の質問が表示される
+3. チャットに業務名・目的・根拠法令・主要ステップ・関係者を順に入力
+4. 各ターンで右側のキャンバスにノードが増えていく
+5. 5 問終わったら「完了して JSON 出力」ボタンが押せるようになる
+6. クリックで `session-{id}.json` がダウンロードされる
+7. Supabase Studio (`http://127.0.0.1:54323`) で `sessions` / `messages` テーブルを確認
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## ディレクトリ
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+app/
+  page.tsx                          トップ (セッション開始)
+  sessions/[id]/page.tsx            セッション画面
+  api/[[...route]]/route.ts         Hono mount
+components/
+  session/SessionView.tsx           2カラムレイアウト + 状態管理
+  chat/{Transcript,ChatInput}.tsx   チャット UI
+  canvas/FlowCanvas.tsx             React Flow 描画
+  ui/                               shadcn 生成物
+lib/
+  db/{client,schema}.ts             Drizzle
+  server/
+    app.ts                          Hono ルート集約
+    routes/sessions.ts              REST エンドポイント
+    interview/{questions,schema,extract,controller}.ts
+    openai.ts
+drizzle/                            マイグレーション
+supabase/                           ローカル Supabase 設定
+```
+
+## スコープ外 (後続スプリント)
+
+- 音声 / LiveKit / STT / TTS
+- 認証 / ユーザー管理
+- 動的質問生成 (深掘り)
+- ファシリテータによる手動ノード編集 / リアルタイム同期
+- Markdown / Mermaid / tldraw エクスポート
+- dagre / ELK 自動レイアウト
