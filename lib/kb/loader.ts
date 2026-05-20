@@ -93,6 +93,51 @@ function extractDisplayName(raw: string, slug: string): string {
   return m[1].replace(/\s*標準業務フロー\s*$/, "").trim() || slug;
 }
 
+/**
+ * flow-standard.md の中の ` ```mermaid ... ``` ` ブロックの中身を順番に取り出す。
+ * UI 側で Mermaid ライブラリにそのまま渡すためのヘルパ。
+ */
+const MERMAID_FENCE_RE = /```mermaid\n([\s\S]*?)\n```/g;
+
+export function extractMermaidSources(rawMarkdown: string): string[] {
+  const out: string[] = [];
+  MERMAID_FENCE_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = MERMAID_FENCE_RE.exec(rawMarkdown)) !== null) {
+    out.push(m[1]);
+  }
+  return out;
+}
+
+/**
+ * 業務スラッグから D3 用の標準フロー情報をまとめてロードする。
+ * - displayName: 業務名 (H1 から `標準業務フロー` 接尾辞を除いたもの)
+ * - mermaidSources: flow-standard.md の mermaid ブロック (描画順)
+ *
+ * スラッグが空 / KB が見つからない場合は null。
+ */
+export type StandardFlowSummary = {
+  slug: string;
+  displayName: string;
+  mermaidSources: string[];
+};
+
+export async function loadStandardFlowSummary(
+  slug: string,
+): Promise<StandardFlowSummary | null> {
+  if (!slug) return null;
+  try {
+    const wf = await loadWorkflowBySlug(slug);
+    return {
+      slug,
+      displayName: extractDisplayName(wf.flowStandard.raw, slug),
+      mermaidSources: extractMermaidSources(wf.flowStandard.raw),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function listAllWorkflows(): Promise<WorkflowMeta[]> {
   const entries = await readdir(KB_ROOT, { withFileTypes: true });
   const slugs = entries
