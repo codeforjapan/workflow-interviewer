@@ -99,6 +99,45 @@ export const ParsedGapNotesSchema = z.object({
 
 export type ParsedGapNotes = z.infer<typeof ParsedGapNotesSchema>;
 
+/**
+ * incident-catalog/INC-*.md の frontmatter。
+ * id, title, severity, frequency, fix_cost が必須。
+ * related_journeys / related_workflows は参照リンク。
+ */
+export const IncidentFrontmatterSchema = z
+  .object({
+    file_type: z.literal("incident"),
+    id: z.string(),
+    title: z.string(),
+    severity: z.string(),
+    frequency: z.string(),
+    fix_cost: z.string(),
+    related_journeys: z.array(z.string()).optional(),
+    related_workflows: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+export type IncidentFrontmatter = z.infer<typeof IncidentFrontmatterSchema>;
+
+/** INC-*.md の各見出しセクション。 */
+export const IncidentSectionSchema = z.object({
+  heading: z.string(),
+  body: z.string(),
+});
+
+export type IncidentSection = z.infer<typeof IncidentSectionSchema>;
+
+export const ParsedIncidentDocSchema = z.object({
+  frontmatter: IncidentFrontmatterSchema,
+  /** "## 何が起きるか" セクション本文（INC-*.md で常に最初に登場する穴の連鎖記述）。 */
+  whatHappens: z.string(),
+  /** その他のセクション（対策案・法的根拠など）。順序は元ファイル通り。 */
+  sections: z.array(IncidentSectionSchema),
+  raw: z.string(),
+});
+
+export type ParsedIncidentDoc = z.infer<typeof ParsedIncidentDocSchema>;
+
 export function normalizeLifecycle(value: string | string[]): string[] {
   return Array.isArray(value) ? value : [value];
 }
