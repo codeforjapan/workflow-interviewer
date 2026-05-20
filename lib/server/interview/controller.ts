@@ -38,12 +38,19 @@ export async function handleUserTurn(params: {
     where: eq(messages.sessionId, sessionId),
     orderBy: asc(messages.createdAt),
   });
-  const updatedExtracted = await extractBusinessInfo({
+  const llmExtracted = await extractBusinessInfo({
     conversation: conversation
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
     current: session.extractedData,
   });
+  const updatedExtracted = {
+    ...llmExtracted,
+    connections: session.extractedData.connections,
+    exceptions: session.extractedData.exceptions,
+    gaps: session.extractedData.gaps,
+    incidents: session.extractedData.incidents,
+  };
 
   // 3. 次の assistant メッセージを決定
   const nextIndex = session.currentQuestionIndex + 1;

@@ -6,9 +6,12 @@ import {
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
-import type { ExtractedBusinessInfo } from "@/lib/server/interview/schema";
+import type {
+  ExtractedBusinessInfo,
+  SessionExtractedData,
+} from "@/lib/server/interview/schema";
 
-export type { ExtractedBusinessInfo };
+export type { ExtractedBusinessInfo, SessionExtractedData };
 export type FlowLayoutNode = { id: string; x: number; y: number };
 export type FlowLayoutEdge = { id: string; source: string; target: string };
 export type FlowLayoutGroup = { id: string; label: string; nodeIds: string[] };
@@ -24,13 +27,17 @@ export const messageRoleEnum = pgEnum("message_role", ["user", "assistant", "sys
 /**
  * インタビューセッション。
  * MVP では抽出された業務情報 (steps 含む) を JSON で持ち、別テーブル化は後続スプリント。
+ *
+ * task_slug は対象業務 (例: "inkan-toroku") を識別するスラッグ。null 許容で、
+ * 業務選択 UI (D1) 導入前のセッションでは null のまま。
  */
 export const sessions = pgTable("sessions", {
   id: text().primaryKey(),
   status: sessionStatusEnum().notNull().default("active"),
+  taskSlug: text(),
   currentQuestionIndex: integer().notNull().default(0),
   extractedData: jsonb()
-    .$type<ExtractedBusinessInfo>()
+    .$type<SessionExtractedData>()
     .notNull()
     .default({
       taskName: null,
@@ -38,6 +45,10 @@ export const sessions = pgTable("sessions", {
       legalBasis: null,
       stakeholders: [],
       steps: [],
+      connections: [],
+      exceptions: [],
+      gaps: [],
+      incidents: [],
     }),
   flowLayout: jsonb()
     .$type<FlowLayout>()
@@ -66,10 +77,14 @@ export const messages = pgTable("messages", {
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-export const EMPTY_EXTRACTED: ExtractedBusinessInfo = {
+export const EMPTY_EXTRACTED: SessionExtractedData = {
   taskName: null,
   purpose: null,
   legalBasis: null,
   stakeholders: [],
   steps: [],
+  connections: [],
+  exceptions: [],
+  gaps: [],
+  incidents: [],
 };
