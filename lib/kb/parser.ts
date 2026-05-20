@@ -3,10 +3,13 @@ import { parseMermaidFlowchart } from "./mermaid";
 import {
   FlowStandardFrontmatterSchema,
   GapNotesFrontmatterSchema,
+  IncidentFrontmatterSchema,
   type Gap,
   type GapSection,
+  type IncidentSection,
   type ParsedFlowStandard,
   type ParsedGapNotes,
+  type ParsedIncidentDoc,
 } from "./types";
 
 export { parseMermaidFlowchart } from "./mermaid";
@@ -14,6 +17,8 @@ export { parseMermaidFlowchart } from "./mermaid";
 const MERMAID_FENCE = /```mermaid\n([\s\S]*?)\n```/g;
 const GAP_HEADING = /^(#{2,3})\s*ギャップ(\d+)\s*[：:]\s*(.+?)\s*$/gm;
 const SECTION_HEADING = /^\*\*([^*]+?)\*\*\s*[：:]\s*(.*)$/gm;
+const H2_HEADING = /^## (.+?)\s*$/gm;
+const WHAT_HAPPENS_HEADING = "何が起きるか";
 
 export function parseFlowStandard(markdown: string): ParsedFlowStandard {
   const parsed = matter(markdown);
@@ -114,4 +119,44 @@ export function parseGapNotes(markdown: string): ParsedGapNotes {
   }
 
   return { frontmatter, gaps, raw: markdown };
+}
+
+/**
+ * incident-catalog/INC-*.md をパースする。
+ * `## 何が起きるか` セクション（穴の連鎖記述）を whatHappens として抽出し、
+ * その他の `## ` セクションは順序を保ったまま sections に入れる。
+ */
+export function parseIncidentDoc(markdown: string): ParsedIncidentDoc {
+  const parsed = matter(markdown);
+  const frontmatter = IncidentFrontmatterSchema.parse(parsed.data);
+  const content = parsed.content;
+
+  const positions: Array<{ start: number; headerEnd: number; heading: string }> =
+    [];
+  H2_HEADING.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = H2_HEADING.exec(content)) !== null) {
+    positions.push({
+      start: m.index,
+      headerEnd: m.index + m[0].length,
+      heading: m[1].trim(),
+    });
+  }
+
+  let whatHappens = "";
+  const sections: IncidentSection[] = [];
+  for (let i = 0; i < positions.length; i += 1) {
+    const cur = positions[i];
+    const next = positions[i + 1];
+    const body = content
+      .slice(cur.headerEnd, next ? next.start : content.length)
+      .trim();
+    if (cur.heading === WHAT_HAPPENS_HEADING) {
+      whatHappens = body;
+    } else {
+      sections.push({ heading: cur.heading, body });
+    }
+  }
+
+  return { frontmatter, whatHappens, sections, raw: markdown };
 }

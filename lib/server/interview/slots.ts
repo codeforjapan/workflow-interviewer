@@ -138,10 +138,19 @@ export function slotCompleteness(
 
 const RECENT_BOOST = 0.5;
 
-/** スロット毎のスコアを返す。weight=0 のスロットは -Infinity 扱い。 */
+export type SlotBoosts = Partial<Record<SlotKey, number>>;
+
+/**
+ * スロット毎のスコアを返す。weight=0 のスロットは -Infinity 扱い。
+ *
+ * boosts はタスクコンテキスト由来の加算ブースト（KB の creates_risks が
+ * あって incidents が空のとき incidents を底上げする等）。
+ * 加算は最終スコアに対して行うため、ベース計算は変えずに優先度のみ上げられる。
+ */
 export function scoreSlots(
   extracted: SessionExtractedData,
   lastUserInput: string,
+  boosts?: SlotBoosts,
 ): Array<{ key: SlotKey; score: number; completeness: number }> {
   const text = lastUserInput.toLowerCase();
   return SLOT_KEYS.map((key) => {
@@ -152,8 +161,9 @@ export function scoreSlots(
     }
     const insufficiency = 1 - completeness;
     const relevant = def.keywords.some((kw) => text.includes(kw.toLowerCase()));
-    const score = def.weight * insufficiency * (1 + (relevant ? RECENT_BOOST : 0));
-    return { key, score, completeness };
+    const base = def.weight * insufficiency * (1 + (relevant ? RECENT_BOOST : 0));
+    const extra = boosts?.[key] ?? 0;
+    return { key, score: base + extra, completeness };
   }).sort((a, b) => b.score - a.score);
 }
 
@@ -161,11 +171,18 @@ export function scoreSlots(
 export function chooseNextSlot(
   extracted: SessionExtractedData,
   lastUserInput: string,
+  boosts?: SlotBoosts,
 ): SlotKey | null {
-  const ranked = scoreSlots(extracted, lastUserInput);
+  const ranked = scoreSlots(extracted, lastUserInput, boosts);
   const top = ranked[0];
   if (!top || top.score <= 0) return null;
   return top.key;
+}
+
+/** 最低充足ゲートを満たしているか（B3 のリスクブースト判定で使用）。 */
+export function isMinimumFilled(extracted: SessionExtractedData): boolean {
+  const minSlots = SLOT_KEYS.filter((k) => SLOT_DEFS[k].requiredForMinimum);
+  return minSlots.every((k) => slotCompleteness(extracted, k) >= 0.7);
 }
 
 /** 最低充足ゲート + 最小ターン数を満たしたら true。 */

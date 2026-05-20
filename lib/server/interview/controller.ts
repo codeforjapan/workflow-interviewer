@@ -5,12 +5,17 @@ import { messages, sessions } from "@/lib/db/schema";
 import { extractBusinessInfo } from "./extract";
 import { generateAdaptiveQuestion } from "./followup";
 import { questions } from "./questions";
+import { formatRiskCueAsGuide, loadRiskCues } from "./risks";
 import {
   chooseNextSlot,
   isFinished,
+  isMinimumFilled,
   MAX_TURNS,
   SLOT_DEFS,
+  type SlotBoosts,
 } from "./slots";
+
+const INCIDENTS_RISK_BOOST = 50;
 
 /**
  * ユーザー発話を受けて 1 ターン進める。
@@ -63,19 +68,39 @@ export async function handleUserTurn(params: {
   const finished = isFinished(updatedExtracted, nextTurnCount);
   const shouldClose = reachedMax || finished;
 
+  // B3: 業務 KB の creates_risks → INC-*.md 由来の cue を読み、
+  // tier-1 が充足 & incidents が空のときに incidents スロットを強くブースト。
+  const riskCues = await loadRiskCues(session.taskSlug ?? "");
+  const boosts: SlotBoosts = {};
+  const incidentsEmpty = updatedExtracted.incidents.length === 0;
+  if (
+    riskCues.length > 0 &&
+    incidentsEmpty &&
+    isMinimumFilled(updatedExtracted)
+  ) {
+    boosts.incidents = INCIDENTS_RISK_BOOST;
+  }
+
   let nextContent: string;
   if (shouldClose) {
     nextContent = questions.closing;
   } else {
-    const slot = chooseNextSlot(updatedExtracted, userInput);
+    const slot = chooseNextSlot(updatedExtracted, userInput, boosts);
     if (!slot) {
       nextContent = questions.closing;
     } else {
-      const template = SLOT_DEFS[slot].template;
+      // incidents スロットが選ばれ、かつ riskCues があれば、
+      // テンプレを「もし X が起きたら何が起きるか」型に差し替える。
+      // ターン毎に cue をローテーションして同じ問いを連投しない。
+      let guideQuestion = SLOT_DEFS[slot].template;
+      if (slot === "incidents" && riskCues.length > 0) {
+        const cue = riskCues[nextTurnCount % riskCues.length];
+        guideQuestion = formatRiskCueAsGuide(cue);
+      }
       nextContent = await generateAdaptiveQuestion({
         sessionId,
         sessionStatus: session.status,
-        guideQuestion: template,
+        guideQuestion,
         questionIndex: nextTurnCount,
         conversation: conversation
           .filter((m) => m.role === "user" || m.role === "assistant")
