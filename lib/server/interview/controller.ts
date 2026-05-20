@@ -2,6 +2,7 @@ import { eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
 import { messages, sessions } from "@/lib/db/schema";
+import { diffStandardVsExtracted } from "@/lib/server/gap/diff";
 import { matchKnownGaps } from "@/lib/server/gap/match";
 import { detectCautionFlagsForExtracted } from "./cautions";
 import { extractBusinessInfo } from "./extract";
@@ -72,14 +73,24 @@ export async function handleUserTurn(params: {
     },
     conversation: conversationForLlm,
   });
+  // C2: 標準フロー vs 抽出 steps の構造差分を新規 gaps として追加。
+  // C1 で蓄積した matchedKnownGap 付き gaps と dedup される。
+  const diffedGaps = await diffStandardVsExtracted({
+    slug: session.taskSlug ?? "",
+    extracted: {
+      ...llmExtracted,
+      gaps: matchedGaps,
+      cautionFlags: [],
+    },
+  });
   const cautionFlags = await detectCautionFlagsForExtracted({
     ...llmExtracted,
-    gaps: matchedGaps,
+    gaps: diffedGaps,
     cautionFlags: [],
   });
   const updatedExtracted = {
     ...llmExtracted,
-    gaps: matchedGaps,
+    gaps: diffedGaps,
     cautionFlags,
   };
 
