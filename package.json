@@ -15,7 +15,8 @@
     "check:gap-match": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-match.ts",
     "check:gap-diff": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-diff.ts",
     "check:gap-recompute": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-recompute.ts",
-    "check:workflows": "tsx scripts/check-workflows.ts"
+    "check:workflows": "tsx scripts/check-workflows.ts",
+    "check:flow-graph": "tsx scripts/check-flow-graph.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

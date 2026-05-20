@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FlowCanvas } from "@/components/canvas/FlowCanvas";
-import type { ExtractedBusinessInfo, FlowLayout } from "@/lib/db/schema";
+import type { FlowLayout, SessionExtractedData } from "@/lib/db/schema";
 
 interface FlowPreviewDialogProps {
   sessionId: string | null;
@@ -11,7 +11,7 @@ interface FlowPreviewDialogProps {
 }
 
 interface SessionData {
-  extractedData: ExtractedBusinessInfo;
+  extractedData: SessionExtractedData;
   flowLayout: FlowLayout;
 }
 

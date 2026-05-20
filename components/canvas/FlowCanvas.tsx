@@ -5,11 +5,10 @@ import {
   Background,
   Controls,
   type NodeMouseHandler,
-  type NodeProps,
   Panel,
   ReactFlow,
   reconnectEdge,
-  type Connection,
+  type Connection as RfConnection,
   type Edge,
   type EdgeChange,
   type Node,
@@ -18,16 +17,27 @@ import {
   useNodesState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { ExtractedBusinessInfo, FlowLayout } from "@/lib/db/schema";
 import { Button } from "@/components/ui/button";
+import {
+  ConnectionExternalNode,
+  GroupBoxNode,
+  StepNode,
+} from "./CustomNodes";
+import { GapDialog } from "./GapDialog";
+import {
+  buildGraph,
+  GROUP_NODE_PREFIX,
+  isGroupNodeId,
+  pickWorkflowLevelGaps,
+} from "./graph";
+import type { FlowLayout, SessionExtractedData } from "@/lib/db/schema";
+import type { ExtractedGap } from "@/lib/server/interview/schema";
 
-const NODE_GAP_Y = 100;
-const NODE_X = 80;
-const GROUP_NODE_PREFIX = "group:";
-const NODE_WIDTH = 220;
-const NODE_HEIGHT = 44;
-const GROUP_PADDING = 24;
-const nodeTypes = { groupBox: GroupBoxNode };
+const nodeTypes = {
+  step: StepNode,
+  connectionExternal: ConnectionExternalNode,
+  groupBox: GroupBoxNode,
+};
 
 export function FlowCanvas({
   extracted,
@@ -36,7 +46,7 @@ export function FlowCanvas({
   onNodeSelect,
   readonly = false,
 }: {
-  extracted: ExtractedBusinessInfo;
+  extracted: SessionExtractedData;
   flowLayout: FlowLayout;
   onFlowChange?: (layout: FlowLayout) => void;
   onNodeSelect?: (nodeId: string) => void;
@@ -45,16 +55,25 @@ export function FlowCanvas({
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<Edge>([]);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [activeGap, setActiveGap] = useState<ExtractedGap | null>(null);
+
+  const handleGapClick = useCallback((gap: ExtractedGap) => {
+    setActiveGap(gap);
+  }, []);
 
   useEffect(() => {
     const merged = buildGraph(extracted, flowLayout);
-    if (!areNodesEqual(nodes, merged.nodes)) {
-      setNodes(merged.nodes);
-    }
-    if (!areEdgesEqual(edges, merged.edges)) {
-      setEdges(merged.edges);
-    }
-  }, [edges, extracted, flowLayout, nodes, setEdges, setNodes]);
+    // step ノードに onGapClick ハンドラを注入する (graph.ts は pure に保つ)
+    const decorated = merged.nodes.map((node) =>
+      node.type === "step"
+        ? { ...node, data: { ...node.data, onGapClick: handleGapClick } }
+        : node,
+    );
+    if (!areNodesEqual(nodes, decorated)) setNodes(decorated);
+    if (!areEdgesEqual(edges, merged.edges)) setEdges(merged.edges);
+  }, [edges, extracted, flowLayout, handleGapClick, nodes, setEdges, setNodes]);
+
+  const workflowGaps = useMemo(() => pickWorkflowLevelGaps(extracted), [extracted]);
 
   const emitFlowChange = useCallback(
     (nextNodes: Node[], nextEdges: Edge[]) => {
@@ -125,7 +144,7 @@ export function FlowCanvas({
   );
 
   const onReconnect = useCallback(
-    (oldEdge: Edge, newConnection: Connection) => {
+    (oldEdge: Edge, newConnection: RfConnection) => {
       setEdges((current) => {
         const nextEdges = reconnectEdge(oldEdge, newConnection, current);
         emitFlowChange(nodes, nextEdges);
@@ -163,7 +182,7 @@ export function FlowCanvas({
   );
 
   return (
-    <div className="h-full w-full">
+    <div className="relative h-full w-full">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -185,85 +204,54 @@ export function FlowCanvas({
                 const nextIds = (selection.nodes ?? [])
                   .map((node) => node.id)
                   .filter((id) => !isGroupNodeId(id));
-                setSelectedNodeIds((prev) => (areStringArraysEqual(prev, nextIds) ? prev : nextIds));
+                setSelectedNodeIds((prev) =>
+                  areStringArraysEqual(prev, nextIds) ? prev : nextIds,
+                );
               }
         }
       >
         {!readonly && (
           <Panel position="top-left">
-            <Button variant="outline" size="sm" disabled={!canCreateGroup} onClick={handleCreateGroup}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!canCreateGroup}
+              onClick={handleCreateGroup}
+            >
               選択ノードをグループ化
             </Button>
+          </Panel>
+        )}
+        {workflowGaps.length > 0 && (
+          <Panel position="top-right">
+            <div className="rounded-md border bg-card p-2 text-xs shadow-sm">
+              <div className="mb-1 font-medium">
+                ワークフロー全体のギャップ ({workflowGaps.length})
+              </div>
+              <div className="flex max-w-[260px] flex-wrap gap-1">
+                {workflowGaps.map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => setActiveGap(g)}
+                    className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                    title={g.reason}
+                  >
+                    {g.kind}
+                    {g.matchedKnownGap ? ` · ${g.matchedKnownGap}` : ""}
+                  </button>
+                ))}
+              </div>
+            </div>
           </Panel>
         )}
         <Background />
         <Controls />
       </ReactFlow>
+
+      <GapDialog gap={activeGap} onOpenChange={(open) => !open && setActiveGap(null)} />
     </div>
   );
-}
-
-function buildGraph(data: ExtractedBusinessInfo, layout: FlowLayout): { nodes: Node[]; edges: Edge[] } {
-  const base = buildBaseGraph(data);
-  const knownNodeIds = new Set(base.nodes.map((node) => node.id));
-  const layoutNodes = new Map(layout.nodes.map((node) => [node.id, node]));
-  const contentNodes = base.nodes.map((node) => {
-    const saved = layoutNodes.get(node.id);
-    return saved
-      ? { ...node, position: { x: saved.x, y: saved.y } }
-      : node;
-  });
-
-  const persistedEdges = layout.edges.filter(
-    (edge) => knownNodeIds.has(edge.source) && knownNodeIds.has(edge.target),
-  );
-  const edges: Edge[] =
-    persistedEdges.length > 0
-      ? persistedEdges.map((edge) => ({
-          id: edge.id,
-          source: edge.source,
-          target: edge.target,
-        }))
-      : base.edges;
-
-  const groupNodes = buildGroupNodes(contentNodes, layout.groups ?? []);
-  const nodes = [...groupNodes, ...contentNodes];
-
-  return { nodes, edges };
-}
-
-function buildBaseGraph(data: ExtractedBusinessInfo): { nodes: Node[]; edges: Edge[] } {
-  const sorted = [...data.steps].sort((a, b) => a.order - b.order);
-  const nodes: Node[] = [];
-  const edges: Edge[] = [];
-
-  // 概要ノード（業務名）
-  if (data.taskName) {
-    nodes.push({
-      id: "task",
-      type: "input",
-      position: { x: NODE_X, y: 0 },
-      data: { label: data.taskName },
-    });
-  }
-
-  sorted.forEach((step, i) => {
-    const yOffset = (data.taskName ? 1 : 0) + i;
-    nodes.push({
-      id: step.id,
-      position: { x: NODE_X, y: yOffset * NODE_GAP_Y },
-      data: { label: `${i + 1}. ${step.label}` },
-    });
-    if (i === 0 && data.taskName) {
-      edges.push({ id: `e-task-${step.id}`, source: "task", target: step.id });
-    }
-    if (i > 0) {
-      const prev = sorted[i - 1];
-      edges.push({ id: `e-${prev.id}-${step.id}`, source: prev.id, target: step.id });
-    }
-  });
-
-  return { nodes, edges };
 }
 
 function applyNodeChanges(nodes: Node[], changes: NodeChange<Node>[]) {
@@ -272,8 +260,9 @@ function applyNodeChanges(nodes: Node[], changes: NodeChange<Node>[]) {
   );
   const positionById = new Map(
     changes
-      .filter((change): change is NodeChange<Node> & { type: "position"; position: { x: number; y: number } } =>
-        change.type === "position" && !!change.position,
+      .filter(
+        (change): change is NodeChange<Node> & { type: "position"; position: { x: number; y: number } } =>
+          change.type === "position" && !!change.position,
       )
       .map((change) => [change.id, change.position]),
   );
@@ -290,58 +279,6 @@ function applyEdgeRemovals(edges: Edge[], changes: EdgeChange<Edge>[]) {
     changes.filter((change) => change.type === "remove").map((change) => change.id),
   );
   return edges.filter((edge) => !removeIds.has(edge.id));
-}
-
-function isGroupNodeId(id: string) {
-  return id.startsWith(GROUP_NODE_PREFIX);
-}
-
-function buildGroupNodes(nodes: Node[], groups: FlowLayout["groups"]): Node[] {
-  const nodesById = new Map(nodes.map((node) => [node.id, node]));
-  const groupNodes: Node[] = [];
-  for (const group of groups) {
-    const members = group.nodeIds
-      .map((id) => nodesById.get(id))
-      .filter((node): node is Node => !!node);
-    if (members.length < 2) continue;
-
-    const minX = Math.min(...members.map((n) => n.position.x)) - GROUP_PADDING;
-    const minY = Math.min(...members.map((n) => n.position.y)) - GROUP_PADDING;
-    const maxX = Math.max(...members.map((n) => n.position.x + NODE_WIDTH)) + GROUP_PADDING;
-    const maxY = Math.max(...members.map((n) => n.position.y + NODE_HEIGHT)) + GROUP_PADDING;
-
-    groupNodes.push({
-      id: `${GROUP_NODE_PREFIX}${group.id}`,
-      type: "groupBox",
-      position: { x: minX, y: minY },
-      data: { label: group.label },
-      draggable: false,
-      selectable: false,
-      style: {
-        width: Math.max(200, maxX - minX),
-        height: Math.max(120, maxY - minY),
-        borderRadius: 12,
-        border: "1px dashed #a1a1aa",
-        background: "rgba(161, 161, 170, 0.08)",
-        pointerEvents: "none",
-        zIndex: -1,
-        padding: 8,
-        fontSize: 12,
-        color: "#52525b",
-      },
-    });
-  }
-  return groupNodes;
-}
-
-function GroupBoxNode({ data }: NodeProps<Node<{ label?: string }>>) {
-  return (
-    <div className="h-full w-full rounded-xl border border-dashed border-zinc-400/80 bg-zinc-400/10">
-      <div className="px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-200">
-        {data.label ?? "グループ"}
-      </div>
-    </div>
-  );
 }
 
 function areNodesEqual(a: Node[], b: Node[]) {
