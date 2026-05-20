@@ -8,17 +8,25 @@ import { ChatInput } from "@/components/chat/ChatInput";
 import { FlowCanvas } from "@/components/canvas/FlowCanvas";
 import { Button } from "@/components/ui/button";
 import { CautionBar } from "@/components/session/CautionBar";
+import {
+  StandardFlowPanel,
+  type StandardFlowSummary,
+} from "@/components/session/StandardFlowPanel";
 import { MAX_TURNS } from "@/lib/server/interview/slots";
 
 type Session = InferSelectModel<typeof sessions>;
 type Message = InferSelectModel<typeof messages>;
 
+type LayoutTab = "standard" | "chat" | "canvas";
+
 export function SessionView({
   initialSession,
   initialMessages,
+  standardFlow,
 }: {
   initialSession: Session;
   initialMessages: Message[];
+  standardFlow: StandardFlowSummary | null;
 }) {
   const [session, setSession] = useState(initialSession);
   const [msgs, setMsgs] = useState(initialMessages);
@@ -28,6 +36,7 @@ export function SessionView({
     "idle",
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<LayoutTab>("chat");
   const flowSaveTimerRef = useRef<number | null>(null);
   const latestFlowLayoutRef = useRef<FlowLayout | null>(null);
 
@@ -234,8 +243,38 @@ export function SessionView({
         </div>
       </header>
       <CautionBar flags={session.extractedData.cautionFlags ?? []} />
-      <div className="grid flex-1 grid-cols-1 overflow-hidden md:grid-cols-2">
-        <section className="flex min-h-0 flex-col border-r">
+      {/* lg 未満: タブで切替、lg 以上: 3 カラム並列表示 */}
+      <div className="flex shrink-0 border-b bg-card lg:hidden">
+        {(
+          [
+            { key: "standard", label: "標準フロー" },
+            { key: "chat", label: "対話" },
+            { key: "canvas", label: "抽出キャンバス" },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            className={`flex-1 px-3 py-2 text-xs font-medium transition ${
+              activeTab === tab.key
+                ? "border-b-2 border-primary text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(280px,1fr)_minmax(360px,1.4fr)_minmax(360px,1.6fr)]">
+        <section
+          className={`min-h-0 border-r ${activeTab === "standard" ? "flex flex-col" : "hidden"} lg:flex lg:flex-col`}
+        >
+          <StandardFlowPanel standardFlow={standardFlow} />
+        </section>
+        <section
+          className={`min-h-0 flex-col border-r ${activeTab === "chat" ? "flex" : "hidden"} lg:flex`}
+        >
           <Transcript messages={msgs} />
           {error && (
             <div className="border-t bg-red-50 px-4 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
@@ -244,7 +283,9 @@ export function SessionView({
           )}
           <ChatInput onSend={sendMessage} disabled={sending || isFinished} />
         </section>
-        <section className="relative">
+        <section
+          className={`relative ${activeTab === "canvas" ? "block" : "hidden"} lg:block`}
+        >
           <FlowCanvas
             extracted={session.extractedData}
             flowLayout={session.flowLayout}
