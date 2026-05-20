@@ -1,7 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  Maximize2Icon,
+  MinusIcon,
+  PlusIcon,
+  RotateCcwIcon,
+} from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { preprocessMermaidSource } from "./mermaid-preprocess";
+
+const MIN_SCALE = 0.25;
+const MAX_SCALE = 4;
+const SCALE_STEP = 1.25;
 
 export type StandardFlowSummary = {
   slug: string;
@@ -57,6 +73,8 @@ type BlockState =
 
 function MermaidBlock({ index, source }: { index: number; source: string }) {
   const [state, setState] = useState<BlockState>({ status: "loading" });
+  const [zoomOpen, setZoomOpen] = useState(false);
+  const [scale, setScale] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,8 +106,8 @@ function MermaidBlock({ index, source }: { index: number; source: string }) {
 
   return (
     <section className="mb-4 last:mb-0">
-      <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        block #{index + 1}
+      <h3 className="mb-1 text-xs font-semibold text-muted-foreground">
+        ケース{index + 1}
       </h3>
       {state.status === "error" ? (
         <div className="rounded border border-red-300 bg-red-50 p-2 text-xs text-red-700 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300">
@@ -104,12 +122,75 @@ function MermaidBlock({ index, source }: { index: number; source: string }) {
           <p className="text-xs text-muted-foreground">描画中...</p>
         </div>
       ) : (
-        <div
-          className="overflow-x-auto rounded border bg-white p-2 dark:bg-zinc-900"
-          // mermaid の出力 SVG を React 管理下に置く。
-          // 直接 innerHTML で書くと、再レンダ時に removeChild が失敗する。
-          dangerouslySetInnerHTML={{ __html: state.svg }}
-        />
+        <button
+          type="button"
+          onClick={() => {
+            setScale(1);
+            setZoomOpen(true);
+          }}
+          className="group relative block w-full cursor-zoom-in overflow-x-auto rounded border bg-white p-2 text-left dark:bg-zinc-900"
+          title="クリックで拡大表示"
+        >
+          <span
+            className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-0.5 rounded bg-zinc-900/70 px-1.5 py-0.5 text-[10px] font-medium text-white opacity-0 transition group-hover:opacity-100"
+          >
+            <Maximize2Icon className="size-3" />
+            拡大
+          </span>
+          <div
+            // mermaid の出力 SVG を React 管理下に置く。
+            // 直接 innerHTML で書くと、再レンダ時に removeChild が失敗する。
+            dangerouslySetInnerHTML={{ __html: state.svg }}
+          />
+        </button>
+      )}
+
+      {state.status === "ready" && (
+        <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
+          <DialogContent className="flex h-[90vh] max-w-[min(1400px,95vw)] flex-col gap-2 sm:max-w-[min(1400px,95vw)]">
+            <DialogHeader>
+              <DialogTitle>
+                ケース{index + 1} ・ {(scale * 100).toFixed(0)}%
+              </DialogTitle>
+            </DialogHeader>
+            <div className="flex gap-1 border-b pb-2">
+              <button
+                type="button"
+                onClick={() => setScale((s) => Math.max(MIN_SCALE, s / SCALE_STEP))}
+                disabled={scale <= MIN_SCALE + 1e-6}
+                className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                title="縮小"
+              >
+                <MinusIcon className="size-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setScale((s) => Math.min(MAX_SCALE, s * SCALE_STEP))}
+                disabled={scale >= MAX_SCALE - 1e-6}
+                className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                title="拡大"
+              >
+                <PlusIcon className="size-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setScale(1)}
+                className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs hover:bg-muted"
+                title="100% に戻す"
+              >
+                <RotateCcwIcon className="size-3" />
+                100%
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto rounded border bg-white p-4 dark:bg-zinc-900">
+              <div
+                style={{ transform: `scale(${scale})`, transformOrigin: "top left" }}
+                className="inline-block"
+                dangerouslySetInnerHTML={{ __html: state.svg }}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
     </section>
   );
