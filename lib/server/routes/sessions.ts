@@ -7,6 +7,7 @@ import { db } from "@/lib/db/client";
 import { sessions, messages } from "@/lib/db/schema";
 import { handleUserTurn } from "@/lib/server/interview/controller";
 import { questions } from "@/lib/server/interview/questions";
+import { SLOT_DEFS } from "@/lib/server/interview/slots";
 import { generateAdaptiveQuestion } from "@/lib/server/interview/followup";
 import { openai, MODELS } from "@/lib/server/openai";
 
@@ -74,7 +75,7 @@ export const sessionsRoute = new Hono()
     const firstQuestion = await generateAdaptiveQuestion({
       sessionId: id,
       sessionStatus: session.status,
-      guideQuestion: questions.list[0],
+      guideQuestion: SLOT_DEFS.taskName.template,
       questionIndex: 0,
       conversation: [],
       extracted: session.extractedData,

@@ -7,7 +7,7 @@ import { Transcript } from "@/components/chat/Transcript";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { FlowCanvas } from "@/components/canvas/FlowCanvas";
 import { Button } from "@/components/ui/button";
-import { TOTAL_QUESTIONS } from "@/lib/server/interview/questions";
+import { MAX_TURNS } from "@/lib/server/interview/slots";
 
 type Session = InferSelectModel<typeof sessions>;
 type Message = InferSelectModel<typeof messages>;
@@ -28,7 +28,7 @@ export function SessionView({
   const latestFlowLayoutRef = useRef<FlowLayout | null>(null);
 
   const isFinished = session.status === "completed";
-  const allQuestionsAsked = session.currentQuestionIndex >= TOTAL_QUESTIONS;
+  const allQuestionsAsked = session.currentQuestionIndex >= MAX_TURNS;
 
   const completeSession = async () => {
     const res = await fetch(`/api/sessions/${session.id}/complete`, { method: "POST" });
@@ -179,7 +179,7 @@ export function SessionView({
         <div>
           <h1 className="text-lg font-semibold">業務インタビュー</h1>
           <p className="text-xs text-zinc-500">
-            セッション {session.id} ・ 進捗 {session.currentQuestionIndex} / {TOTAL_QUESTIONS}
+            セッション {session.id} ・ ターン {Math.min(session.currentQuestionIndex, MAX_TURNS)} / {MAX_TURNS}
             {isFinished && " ・ 完了"}
           </p>
           {flowSaveState === "saving" && <p className="text-xs text-zinc-500">フローを保存中...</p>}
