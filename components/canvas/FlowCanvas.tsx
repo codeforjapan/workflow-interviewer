@@ -34,11 +34,13 @@ export function FlowCanvas({
   flowLayout,
   onFlowChange,
   onNodeSelect,
+  readonly = false,
 }: {
   extracted: ExtractedBusinessInfo;
   flowLayout: FlowLayout;
-  onFlowChange: (layout: FlowLayout) => void;
+  onFlowChange?: (layout: FlowLayout) => void;
   onNodeSelect?: (nodeId: string) => void;
+  readonly?: boolean;
 }) {
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<Edge>([]);
@@ -56,6 +58,7 @@ export function FlowCanvas({
 
   const emitFlowChange = useCallback(
     (nextNodes: Node[], nextEdges: Edge[]) => {
+      if (!onFlowChange) return;
       const layout: FlowLayout = {
         nodes: nextNodes
           .filter((node) => !isGroupNodeId(node.id))
@@ -90,7 +93,7 @@ export function FlowCanvas({
         nodeIds: selectedNodeIds,
       },
     ];
-    onFlowChange({
+    onFlowChange?.({
       nodes: flowLayout.nodes,
       edges: flowLayout.edges,
       groups: nextGroups,
@@ -143,7 +146,7 @@ export function FlowCanvas({
       const nextGroups = (flowLayout.groups ?? []).map((group) =>
         group.id === groupId ? { ...group, label: nextLabel } : group,
       );
-      onFlowChange({
+      onFlowChange?.({
         nodes: flowLayout.nodes,
         edges: flowLayout.edges,
         groups: nextGroups,
@@ -167,26 +170,32 @@ export function FlowCanvas({
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.3 }}
-        nodesDraggable
-        edgesReconnectable
-        elementsSelectable
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onReconnect={onReconnect}
+        nodesDraggable={!readonly}
+        edgesReconnectable={!readonly}
+        elementsSelectable={!readonly}
+        onNodesChange={readonly ? undefined : onNodesChange}
+        onEdgesChange={readonly ? undefined : onEdgesChange}
+        onReconnect={readonly ? undefined : onReconnect}
         onNodeClick={onNodeClick}
-        onNodeDoubleClick={onNodeDoubleClick}
-        onSelectionChange={(selection) => {
-          const nextIds = (selection.nodes ?? [])
-            .map((node) => node.id)
-            .filter((id) => !isGroupNodeId(id));
-          setSelectedNodeIds((prev) => (areStringArraysEqual(prev, nextIds) ? prev : nextIds));
-        }}
+        onNodeDoubleClick={readonly ? undefined : onNodeDoubleClick}
+        onSelectionChange={
+          readonly
+            ? undefined
+            : (selection) => {
+                const nextIds = (selection.nodes ?? [])
+                  .map((node) => node.id)
+                  .filter((id) => !isGroupNodeId(id));
+                setSelectedNodeIds((prev) => (areStringArraysEqual(prev, nextIds) ? prev : nextIds));
+              }
+        }
       >
-        <Panel position="top-left">
-          <Button variant="outline" size="sm" disabled={!canCreateGroup} onClick={handleCreateGroup}>
-            選択ノードをグループ化
-          </Button>
-        </Panel>
+        {!readonly && (
+          <Panel position="top-left">
+            <Button variant="outline" size="sm" disabled={!canCreateGroup} onClick={handleCreateGroup}>
+              選択ノードをグループ化
+            </Button>
+          </Panel>
+        )}
         <Background />
         <Controls />
       </ReactFlow>

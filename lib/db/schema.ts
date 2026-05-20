@@ -47,6 +47,8 @@ export const sessions = pgTable("sessions", {
       edges: [],
       groups: [],
     }),
+  category: text(),
+  summary: text(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp({ withTimezone: true })
     .notNull()

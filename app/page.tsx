@@ -1,49 +1,24 @@
-"use client";
+import { desc } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { sessions } from "@/lib/db/schema";
+import { DashboardClient } from "@/components/dashboard/DashboardClient";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-
-export default function Home() {
-  const router = useRouter();
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const startSession = async () => {
-    setCreating(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/sessions", { method: "POST" });
-      if (!res.ok) throw new Error(`failed: ${res.status}`);
-      const data = (await res.json()) as { session: { id: string } };
-      router.push(`/sessions/${data.session.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "unknown error");
-      setCreating(false);
-    }
-  };
+export default async function Home() {
+  const allSessions = await db.query.sessions.findMany({
+    orderBy: desc(sessions.createdAt),
+  });
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-6 dark:bg-zinc-950">
-      <Card className="w-full max-w-xl">
-        <CardHeader>
-          <CardTitle>業務インタビュー</CardTitle>
-          <CardDescription>
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">業務インタビュー</h1>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
             AI が業務についてヒアリングし、その場でフロー図を生成します。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            「新しいセッションを開始」を押すとインタビューが始まります。チャット形式で 5
-            つの質問に答えていくと、右側のキャンバスにフロー図が描かれます。
           </p>
-          <Button onClick={startSession} disabled={creating} className="w-full">
-            {creating ? "作成中..." : "新しいセッションを開始"}
-          </Button>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-        </CardContent>
-      </Card>
+        </div>
+        <DashboardClient sessions={allSessions} />
+      </div>
     </div>
   );
 }
