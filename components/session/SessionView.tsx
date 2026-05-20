@@ -7,6 +7,7 @@ import { Transcript } from "@/components/chat/Transcript";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { FlowCanvas } from "@/components/canvas/FlowCanvas";
 import { Button } from "@/components/ui/button";
+import { CautionBar } from "@/components/session/CautionBar";
 import { MAX_TURNS } from "@/lib/server/interview/slots";
 
 type Session = InferSelectModel<typeof sessions>;
@@ -199,6 +200,7 @@ export function SessionView({
           )}
         </div>
       </header>
+      <CautionBar flags={session.extractedData.cautionFlags ?? []} />
       <div className="grid flex-1 grid-cols-1 overflow-hidden md:grid-cols-2">
         <section className="flex min-h-0 flex-col border-r">
           <Transcript messages={msgs} />

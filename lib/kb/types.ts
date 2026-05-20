@@ -138,6 +138,42 @@ export const ParsedIncidentDocSchema = z.object({
 
 export type ParsedIncidentDoc = z.infer<typeof ParsedIncidentDocSchema>;
 
+/**
+ * concepts/*.md の frontmatter。
+ * ai_caution=true の概念は AI が自動推論してはならない領域として明示される。
+ * concept_name は "世帯" / "収入・所得" / "住所・居住地" のように "・" 区切りで複合表記の場合あり。
+ */
+export const ConceptFrontmatterSchema = z
+  .object({
+    file_type: z.literal("concept"),
+    concept_id: z.string(),
+    concept_name: z.string(),
+    divergence_scope: z.array(z.string()).optional(),
+    related_workflows: z.array(z.string()).optional(),
+    related_incidents: z.array(z.string()).optional(),
+    ai_caution: z.boolean().optional(),
+    review_status: z.enum(["drafted", "reviewed", "verified"]).optional(),
+  })
+  .passthrough();
+
+export type ConceptFrontmatter = z.infer<typeof ConceptFrontmatterSchema>;
+
+export const ConceptSectionSchema = z.object({
+  heading: z.string(),
+  body: z.string(),
+});
+
+export type ConceptSection = z.infer<typeof ConceptSectionSchema>;
+
+export const ParsedConceptDocSchema = z.object({
+  frontmatter: ConceptFrontmatterSchema,
+  /** 全 H2 セクションを順序保持して保持。"競合が顕在化する典型場面" / "AIへの注意事項" 等の抽出はここから行う。 */
+  sections: z.array(ConceptSectionSchema),
+  raw: z.string(),
+});
+
+export type ParsedConceptDoc = z.infer<typeof ParsedConceptDocSchema>;
+
 export function normalizeLifecycle(value: string | string[]): string[] {
   return Array.isArray(value) ? value : [value];
 }

@@ -20,6 +20,7 @@ const EMPTY: SessionExtractedData = {
   exceptions: [],
   gaps: [],
   incidents: [],
+  cautionFlags: [],
 };
 
 function withSteps(n: number) {

@@ -10,7 +10,8 @@
     "check:kb": "tsx scripts/check-kb-parser.ts",
     "check:slots": "tsx scripts/check-slots.ts",
     "check:kb-seed": "tsx scripts/check-kb-seed.ts",
-    "check:risks": "tsx scripts/check-risks.ts"
+    "check:risks": "tsx scripts/check-risks.ts",
+    "check:cautions": "tsx scripts/check-cautions.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

@@ -91,11 +91,36 @@ export const ExtractedGapSchema = z.object({
 export type ExtractedGap = z.infer<typeof ExtractedGapSchema>;
 
 /**
+ * AI が自動推論してはならない制度間競合概念（KB concepts/*.md の ai_caution=true）が
+ * 抽出データの label 中で検出されたとき、その出現箇所を記録するフラグ。
+ *
+ * UI で「この概念は制度ごとに定義が異なります」警告バッジを出す。
+ * concept 本文は API/lazy fetch で別取得する想定なので、このフラグには ID と一致情報のみ保持。
+ */
+export const CautionFlagSchema = z.object({
+  conceptId: z.string(),
+  conceptName: z.string(),
+  conceptSlug: z.string(),
+  matches: z.array(
+    z.object({
+      source: z.enum(["steps", "exceptions", "connections"]),
+      sourceId: z.string(),
+      text: z.string(),
+      term: z.string(),
+    }),
+  ),
+});
+
+export type CautionFlag = z.infer<typeof CautionFlagSchema>;
+
+/**
  * DB の sessions.extractedData が持つ完全形。
- * LLM 抽出（ExtractedBusinessInfo）に gaps を加えたもの。
+ * LLM 抽出（ExtractedBusinessInfo）に gaps と cautionFlags を加えたもの。
+ * いずれも LLM ではなく KB マッチ/後処理で派生する。
  */
 export const SessionExtractedDataSchema = ExtractedBusinessInfoSchema.extend({
   gaps: z.array(ExtractedGapSchema),
+  cautionFlags: z.array(CautionFlagSchema),
 });
 
 export type SessionExtractedData = z.infer<typeof SessionExtractedDataSchema>;

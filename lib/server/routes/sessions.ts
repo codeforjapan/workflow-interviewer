@@ -104,6 +104,7 @@ export const sessionsRoute = new Hono()
           exceptions: [],
           gaps: [],
           incidents: [],
+          cautionFlags: [],
         },
       })
       .returning();
