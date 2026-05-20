@@ -114,19 +114,19 @@ function main() {
       stakeholders: ["住民", "窓口", "審査", "外部"],
       steps: withSteps(6),
       connections: [
-        { id: "c1", fromStepId: "s1", target: { type: "department", label: "他課" } },
-        { id: "c2", fromStepId: "s2", target: { type: "external", label: "外部" } },
-        { id: "c3", fromStepId: "s3", target: { type: "workflow", label: "別業務" } },
+        { id: "c1", fromStepId: "s1", target: { type: "department", label: "他課", ref: null }, note: null },
+        { id: "c2", fromStepId: "s2", target: { type: "external", label: "外部", ref: null }, note: null },
+        { id: "c3", fromStepId: "s3", target: { type: "workflow", label: "別業務", ref: null }, note: null },
       ],
       exceptions: [
-        { id: "e1", relatedStepId: "s2", label: "差し戻し", condition: "書類不備" },
-        { id: "e2", relatedStepId: "s3", label: "保留", condition: "本人確認不能" },
-        { id: "e3", relatedStepId: "s4", label: "却下", condition: "対象外" },
+        { id: "e1", relatedStepId: "s2", label: "差し戻し", condition: "書類不備", frequency: null },
+        { id: "e2", relatedStepId: "s3", label: "保留", condition: "本人確認不能", frequency: null },
+        { id: "e3", relatedStepId: "s4", label: "却下", condition: "対象外", frequency: null },
       ],
       incidents: [
-        { id: "i1", scenario: "...", severity: "low" },
-        { id: "i2", scenario: "...", severity: "medium" },
-        { id: "i3", scenario: "...", severity: "high" },
+        { id: "i1", relatedStepId: null, scenario: "...", severity: "low", knownIncidentRef: null },
+        { id: "i2", relatedStepId: null, scenario: "...", severity: "medium", knownIncidentRef: null },
+        { id: "i3", relatedStepId: null, scenario: "...", severity: "high", knownIncidentRef: null },
       ],
     };
     const top = chooseNextSlot(allFilled, "");

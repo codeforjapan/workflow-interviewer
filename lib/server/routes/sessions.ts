@@ -9,7 +9,16 @@ import { handleUserTurn } from "@/lib/server/interview/controller";
 import { questions } from "@/lib/server/interview/questions";
 import { SLOT_DEFS } from "@/lib/server/interview/slots";
 import { generateAdaptiveQuestion } from "@/lib/server/interview/followup";
+import { loadSeedConnections } from "@/lib/server/interview/seed";
 import { openai, MODELS } from "@/lib/server/openai";
+
+const DEFAULT_TASK_SLUG = "inkan-toroku";
+
+const sessionCreateSchema = z
+  .object({
+    task_slug: z.string().min(1).optional(),
+  })
+  .optional();
 
 const WORKFLOW_CATEGORIES = [
   "申請・届出",
@@ -64,12 +73,39 @@ export const sessionsRoute = new Hono()
   /**
    * POST /api/sessions
    * 新規セッションを作成し、最初の assistant メッセージ (アイスブレイク + Q1) を返す。
+   * body.task_slug が指定されればその業務 KB から connections を seed する。
+   * 未指定の場合は inkan-toroku がデフォルト（D1 のセレクタ UI が入るまでの暫定挙動）。
    */
   .post("/", async (c) => {
+    let body: { task_slug?: string } | undefined;
+    try {
+      const raw = await c.req.json();
+      const parsed = sessionCreateSchema.parse(raw);
+      body = parsed;
+    } catch {
+      body = undefined;
+    }
+    const taskSlug = body?.task_slug ?? DEFAULT_TASK_SLUG;
+    const seedConnections = await loadSeedConnections(taskSlug);
+
     const id = nanoid(12);
     const [session] = await db
       .insert(sessions)
-      .values({ id })
+      .values({
+        id,
+        taskSlug,
+        extractedData: {
+          taskName: null,
+          purpose: null,
+          legalBasis: null,
+          stakeholders: [],
+          steps: [],
+          connections: seedConnections,
+          exceptions: [],
+          gaps: [],
+          incidents: [],
+        },
+      })
       .returning();
 
     const firstQuestion = await generateAdaptiveQuestion({

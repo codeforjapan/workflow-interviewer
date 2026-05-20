@@ -50,12 +50,11 @@ export async function handleUserTurn(params: {
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
     current: session.extractedData,
   });
+  // LLM は connections / exceptions / incidents まで抽出する (B2)。
+  // gaps は C1/C2 の KB マッチ経由で埋まる別経路のため、ここではセッションの既存値を保持。
   const updatedExtracted = {
     ...llmExtracted,
-    connections: session.extractedData.connections,
-    exceptions: session.extractedData.exceptions,
     gaps: session.extractedData.gaps,
-    incidents: session.extractedData.incidents,
   };
 
   // 3. スロット駆動で次の発話を決定

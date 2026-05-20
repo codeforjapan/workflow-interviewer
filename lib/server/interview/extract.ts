@@ -20,9 +20,27 @@ steps 抽出方針:
 - 「開始条件（何をきっかけに始まるか）」は最初の step に含める
 - 「完了条件（何をもって完了か）」は最後の step に含める
 - 分岐条件は step.label に「（条件: ...）」として埋め込む
-- 例外・差し戻し・保留は通常フローの近い step.label に「（例外: ...）」として埋め込む
-- 他業務への連携・同時案内がある場合は、末尾寄りの step として追加する
-- 同じ意味の step は重複させず、簡潔に統合する`;
+- 同じ意味の step は重複させず、簡潔に統合する
+
+connections（業務間/部署/外部機関リンク）:
+- 他業務・他部署・外部機関・システムへのリンクを抽出する
+- 「○○課に連携」「△△制度に引き継ぐ」「外部機関と協議」等の発話が対象
+- 既に抽出済み（KB 由来含む）の connection は保持し、新規分のみ追加する
+- id は "c1", "c2", ...（KB 由来の "kb-t*"/"kb-d*" は変えない）
+- fromStepId は特定 step に紐づく場合のみ string、ワークフロー全体のリンクは null
+- target.type は workflow / department / external / system のいずれか
+- target.label は人が読める短い名前、target.ref は null で可
+
+exceptions（例外フロー）:
+- 差し戻し・再申請・保留・却下など、通常フローから外れる分岐を別管理する
+- step.label に例外を埋め込むのではなく、exception として切り出す
+- id は "e1", "e2", ... 、relatedStepId は必ず該当 step の id を指す
+- condition は「いつ発生するか」、frequency は「どの程度の頻度か」（不明なら null）
+
+incidents（過去のヒヤリハット/ミス）:
+- 「過去に〜があった」「ミスしやすいのは〜」「危うく〜だった」等の発話を抽出
+- id は "i1", "i2", ... 、relatedStepId はあれば該当 step を指す（無ければ null）
+- severity (low/medium/high) を語りの強さから推定。明示なしでも medium をデフォルト`;
 
 type Message = { role: "user" | "assistant"; content: string };
 
