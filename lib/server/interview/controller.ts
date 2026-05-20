@@ -2,8 +2,7 @@ import { eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
 import { messages, sessions } from "@/lib/db/schema";
-import { diffStandardVsExtracted } from "@/lib/server/gap/diff";
-import { matchKnownGaps } from "@/lib/server/gap/match";
+import { recomputeGaps, shouldRecomputeGaps } from "@/lib/server/gap/recompute";
 import { detectCautionFlagsForExtracted } from "./cautions";
 import { extractBusinessInfo } from "./extract";
 import { generateAdaptiveQuestion } from "./followup";
@@ -64,38 +63,35 @@ export async function handleUserTurn(params: {
   const conversationForLlm = conversation
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
-  const matchedGaps = await matchKnownGaps({
-    slug: session.taskSlug ?? "",
-    extracted: {
-      ...llmExtracted,
-      gaps: session.extractedData.gaps,
-      cautionFlags: [],
-    },
-    conversation: conversationForLlm,
-  });
-  // C2: 標準フロー vs 抽出 steps の構造差分を新規 gaps として追加。
-  // C1 で蓄積した matchedKnownGap 付き gaps と dedup される。
-  const diffedGaps = await diffStandardVsExtracted({
-    slug: session.taskSlug ?? "",
-    extracted: {
-      ...llmExtracted,
-      gaps: matchedGaps,
-      cautionFlags: [],
-    },
-  });
+  // C3: ギャップ計算 (C1+C2) は 3 ターン毎に絞る。それ以外のターンでは
+  //     セッション既存の gaps をそのまま維持する。明示再計算は
+  //     POST /api/sessions/:id/gap-recompute から呼ばれる。
+  const nextTurnCount = session.currentQuestionIndex + 1;
+  const refreshGaps = shouldRecomputeGaps(nextTurnCount);
+  const gaps = refreshGaps
+    ? await recomputeGaps({
+        slug: session.taskSlug ?? "",
+        extracted: {
+          ...llmExtracted,
+          gaps: session.extractedData.gaps,
+          cautionFlags: [],
+        },
+        conversation: conversationForLlm,
+      })
+    : session.extractedData.gaps;
+  // cautionFlags は label を毎ターンスキャンするだけの軽い処理なので毎ターン更新する。
   const cautionFlags = await detectCautionFlagsForExtracted({
     ...llmExtracted,
-    gaps: diffedGaps,
+    gaps,
     cautionFlags: [],
   });
   const updatedExtracted = {
     ...llmExtracted,
-    gaps: diffedGaps,
+    gaps,
     cautionFlags,
   };
 
   // 3. スロット駆動で次の発話を決定
-  const nextTurnCount = session.currentQuestionIndex + 1;
   const reachedMax = nextTurnCount >= MAX_TURNS;
   const finished = isFinished(updatedExtracted, nextTurnCount);
   const shouldClose = reachedMax || finished;

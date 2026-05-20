@@ -5,7 +5,9 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { sessions, messages } from "@/lib/db/schema";
+import { detectCautionFlagsForExtracted } from "@/lib/server/interview/cautions";
 import { handleUserTurn } from "@/lib/server/interview/controller";
+import { recomputeGaps } from "@/lib/server/gap/recompute";
 import { questions } from "@/lib/server/interview/questions";
 import { SLOT_DEFS } from "@/lib/server/interview/slots";
 import { generateAdaptiveQuestion } from "@/lib/server/interview/followup";
@@ -166,6 +168,49 @@ export const sessionsRoute = new Hono()
     }
   })
   /**
+   * POST /api/sessions/:id/gap-recompute
+   * C3: 「ギャップ更新」ボタン用の明示再計算エンドポイント。
+   * C1 + C2 を実行して gaps[] と cautionFlags を更新する。
+   */
+  .post("/:id/gap-recompute", async (c) => {
+    const id = c.req.param("id");
+    const session = await db.query.sessions.findFirst({
+      where: eq(sessions.id, id),
+    });
+    if (!session) return c.json({ error: "session not found" }, 404);
+
+    const sessionMessages = await db.query.messages.findMany({
+      where: eq(messages.sessionId, id),
+      orderBy: asc(messages.createdAt),
+    });
+    const conversationForLlm = sessionMessages
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+    try {
+      const gaps = await recomputeGaps({
+        slug: session.taskSlug ?? "",
+        extracted: { ...session.extractedData, cautionFlags: [] },
+        conversation: conversationForLlm,
+      });
+      const cautionFlags = await detectCautionFlagsForExtracted({
+        ...session.extractedData,
+        gaps,
+        cautionFlags: [],
+      });
+      const [updated] = await db
+        .update(sessions)
+        .set({ extractedData: { ...session.extractedData, gaps, cautionFlags } })
+        .where(eq(sessions.id, id))
+        .returning();
+      return c.json({ session: updated });
+    } catch (err) {
+      console.error("[POST /sessions/:id/gap-recompute] failed", err);
+      const message = err instanceof Error ? err.message : "unknown error";
+      return c.json({ error: message }, 500);
+    }
+  })
+  /**
    * PATCH /api/sessions/:id/flow
    * 手動編集されたフロー図のレイアウト・接続を保存する。
    */
@@ -199,7 +244,32 @@ export const sessionsRoute = new Hono()
     });
     if (!session) return c.json({ error: "session not found" }, 404);
 
-    const { taskName, purpose, legalBasis, steps } = session.extractedData;
+    // C3: 完了時の最終ギャップ計算 (失敗しても complete 処理は止めない)
+    let finalExtracted = session.extractedData;
+    try {
+      const finalMessages = await db.query.messages.findMany({
+        where: eq(messages.sessionId, id),
+        orderBy: asc(messages.createdAt),
+      });
+      const conversationForLlm = finalMessages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+      const gaps = await recomputeGaps({
+        slug: session.taskSlug ?? "",
+        extracted: { ...session.extractedData, cautionFlags: [] },
+        conversation: conversationForLlm,
+      });
+      const cautionFlags = await detectCautionFlagsForExtracted({
+        ...session.extractedData,
+        gaps,
+        cautionFlags: [],
+      });
+      finalExtracted = { ...session.extractedData, gaps, cautionFlags };
+    } catch (err) {
+      console.error("[POST /sessions/:id/complete] final gap recompute failed", err);
+    }
+
+    const { taskName, purpose, legalBasis, steps } = finalExtracted;
     let category: string | null = null;
     let summary: string | null = null;
 
@@ -244,7 +314,12 @@ JSON形式で回答してください: {"category": "<カテゴリ名>", "summar
 
     const [updated] = await db
       .update(sessions)
-      .set({ status: "completed", category, summary })
+      .set({
+        status: "completed",
+        category,
+        summary,
+        extractedData: finalExtracted,
+      })
       .where(eq(sessions.id, id))
       .returning();
     return c.json({ session: updated });
