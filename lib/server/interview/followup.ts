@@ -1,11 +1,16 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
+import { zodResponseFormat } from "openai/helpers/zod";
+import { loadStandardFlowSummary } from "@/lib/kb/loader";
 import { MODELS, openai } from "@/lib/server/openai";
-import type { ExtractedBusinessInfo } from "./schema";
+import type { SessionExtractedData } from "@/lib/db/schema";
 
 const WORKFLOW_DOCS_ROOT = path.join(process.cwd(), "docs", "workflow");
 const MAX_SNIPPETS = 5;
 const MAX_SNIPPET_CHARS = 700;
+const MAX_KB_FLOW_CHARS = 2400;
+const MAX_CHOICES = 5;
 
 type WorkflowSnippet = { file: string; content: string };
 
@@ -13,17 +18,39 @@ let snippetsCache: Promise<WorkflowSnippet[]> | null = null;
 
 type InterviewMessage = { role: "user" | "assistant"; content: string };
 
+const FollowupSchema = z.object({
+  content: z.string(),
+  choices: z.array(z.string()),
+});
+
+export type FollowupResult = {
+  content: string;
+  choices: string[];
+};
+
 export async function generateAdaptiveQuestion(params: {
   sessionId: string;
   sessionStatus: "active" | "completed";
   guideQuestion: string;
   questionIndex: number;
   conversation: InterviewMessage[];
-  extracted: ExtractedBusinessInfo;
-}) {
-  const { sessionId, sessionStatus, guideQuestion, questionIndex, conversation, extracted } = params;
+  extracted: SessionExtractedData;
+  taskSlug?: string | null;
+}): Promise<FollowupResult> {
+  const {
+    sessionId,
+    sessionStatus,
+    guideQuestion,
+    questionIndex,
+    conversation,
+    extracted,
+    taskSlug,
+  } = params;
   try {
-    const snippets = await getWorkflowSnippets();
+    const [snippets, kbStandardFlow] = await Promise.all([
+      getWorkflowSnippets(),
+      taskSlug ? loadStandardFlowSummary(taskSlug) : Promise.resolve(null),
+    ]);
     const lastUserInput =
       [...conversation].reverse().find((m) => m.role === "user")?.content ?? "";
     const selected = selectRelevantSnippets(snippets, [
@@ -37,21 +64,34 @@ export async function generateAdaptiveQuestion(params: {
       .map((m) => `${m.role === "user" ? "職員" : "AI"}: ${m.content}`)
       .join("\n");
 
-    const completion = await openai.chat.completions.create({
+    const kbFlowSection = kbStandardFlow && kbStandardFlow.mermaidSources.length > 0
+      ? `\n\n対象業務「${kbStandardFlow.displayName}」の標準フロー (mermaid 抜粋):\n${kbStandardFlow.mermaidSources
+          .join("\n---\n")
+          .slice(0, MAX_KB_FLOW_CHARS)}`
+      : "";
+
+    const completion = await openai.chat.completions.parse({
       model: MODELS.chat,
-      temperature: 0.5,
+      temperature: 0.4,
       messages: [
         {
           role: "system",
           content: `あなたは自治体業務ヒアリングのインタビュアーです。
 次に聞くべき質問を1つだけ生成してください。
 
-ルール:
-- docs/workflow の文脈に沿った具体化を優先し、固定質問は参考程度に扱う
+質問本文のルール:
+- 標準フローや docs/workflow 抜粋の文脈に沿った具体化を優先する
 - 推測や断定はしない
 - 1文・120文字以内
 - 職員が答えやすい自然な口調
-- 目的は、taskName/purpose/legalBasis/stakeholders/steps を埋めること`,
+- 目的は、taskName/purpose/legalBasis/stakeholders/steps を埋めること
+
+選択肢 (choices) の出し方:
+- 「曖昧な短い回答 (例: 必要書類があります / 担当課に回します) を職員がしたあとに、具体名を尋ねる」ような追い質問のときは、標準フロー/抜粋で想定される具体名を choices として 2〜5 件挙げる
+- 自由記述が必要な質問 (理由・経緯・課題感など) では choices は空配列にする
+- 各 choice は 1〜30 文字、職員が即答できる短い名詞句にする
+- 「その他」は含めない (UI 側で自動的に追加される)
+- 提示済みの選択肢と重複させない`,
         },
         {
           role: "user",
@@ -60,7 +100,6 @@ export async function generateAdaptiveQuestion(params: {
 - sessionStatus: ${sessionStatus}
 - currentQuestionIndex: ${questionIndex}
 
-現在の固定質問番号: ${questionIndex + 1}
 参考ガイド質問:
 ${guideQuestion}
 
@@ -71,17 +110,35 @@ ${conversationText || "(まだ会話なし)"}
 ${JSON.stringify(extracted)}
 
 docs/workflow 抜粋:
-${context}`,
+${context}${kbFlowSection}`,
         },
       ],
+      response_format: zodResponseFormat(FollowupSchema, "next_followup"),
     });
 
-    const question = completion.choices[0]?.message.content?.trim() ?? "";
-    if (!question) return guideQuestion;
-    return question;
+    const parsed = completion.choices[0]?.message.parsed;
+    if (!parsed || !parsed.content.trim()) {
+      return { content: guideQuestion, choices: [] };
+    }
+    const dedupedChoices = uniq(parsed.choices)
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0 && c.length <= 40)
+      .slice(0, MAX_CHOICES);
+    return { content: parsed.content.trim(), choices: dedupedChoices };
   } catch {
-    return guideQuestion;
+    return { content: guideQuestion, choices: [] };
   }
+}
+
+function uniq(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of values) {
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
 }
 
 async function getWorkflowSnippets() {
@@ -90,18 +147,23 @@ async function getWorkflowSnippets() {
 }
 
 async function loadWorkflowSnippets(): Promise<WorkflowSnippet[]> {
-  const files = await collectMarkdownFiles(WORKFLOW_DOCS_ROOT);
-  const snippets: WorkflowSnippet[] = [];
-  for (const file of files) {
-    const raw = await readFile(file, "utf-8");
-    const normalized = raw.replace(/\r\n/g, "\n").trim();
-    if (!normalized) continue;
-    snippets.push({
-      file: path.relative(WORKFLOW_DOCS_ROOT, file),
-      content: normalized.slice(0, MAX_SNIPPET_CHARS),
-    });
+  try {
+    const files = await collectMarkdownFiles(WORKFLOW_DOCS_ROOT);
+    const snippets: WorkflowSnippet[] = [];
+    for (const file of files) {
+      const raw = await readFile(file, "utf-8");
+      const normalized = raw.replace(/\r\n/g, "\n").trim();
+      if (!normalized) continue;
+      snippets.push({
+        file: path.relative(WORKFLOW_DOCS_ROOT, file),
+        content: normalized.slice(0, MAX_SNIPPET_CHARS),
+      });
+    }
+    return snippets;
+  } catch {
+    // docs/workflow が存在しなくても falback して動作する (KB に統一する移行期)
+    return [];
   }
-  return snippets;
 }
 
 async function collectMarkdownFiles(rootDir: string): Promise<string[]> {

@@ -110,6 +110,7 @@ export async function handleUserTurn(params: {
   }
 
   let nextContent: string;
+  let nextChoices: string[] = [];
   if (shouldClose) {
     nextContent = questions.closing;
   } else {
@@ -125,7 +126,7 @@ export async function handleUserTurn(params: {
         const cue = riskCues[nextTurnCount % riskCues.length];
         guideQuestion = formatRiskCueAsGuide(cue);
       }
-      nextContent = await generateAdaptiveQuestion({
+      const followup = await generateAdaptiveQuestion({
         sessionId,
         sessionStatus: session.status,
         guideQuestion,
@@ -134,7 +135,10 @@ export async function handleUserTurn(params: {
           .filter((m) => m.role === "user" || m.role === "assistant")
           .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
         extracted: updatedExtracted,
+        taskSlug: session.taskSlug,
       });
+      nextContent = followup.content;
+      nextChoices = followup.choices;
     }
   }
 
@@ -143,6 +147,7 @@ export async function handleUserTurn(params: {
     sessionId,
     role: "assistant",
     content: nextContent,
+    meta: { choices: nextChoices },
   });
 
   // 4. session 更新。終了時は currentQuestionIndex を MAX_TURNS にして UI の "完了" ボタンを有効化。
