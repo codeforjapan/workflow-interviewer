@@ -68,6 +68,13 @@ export const sessions = pgTable("sessions", {
     .$onUpdate(() => new Date()),
 });
 
+export type MessageMeta = {
+  /** B5: assistant メッセージが選択肢付きで提示されたときの候補。
+   *  UI が「その他」を自動付加するため、ここには含めない。
+   *  user メッセージや choices 不要の assistant メッセージでは空配列。 */
+  choices?: string[];
+};
+
 export const messages = pgTable("messages", {
   id: text().primaryKey(),
   sessionId: text()
@@ -75,6 +82,7 @@ export const messages = pgTable("messages", {
     .references(() => sessions.id, { onDelete: "cascade" }),
   role: messageRoleEnum().notNull(),
   content: text().notNull(),
+  meta: jsonb().$type<MessageMeta>().notNull().default({}),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 

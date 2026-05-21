@@ -1,15 +1,19 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import type { KeyboardEvent, RefObject } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
 export function ChatInput({
   onSend,
   disabled,
+  textareaRef,
 }: {
   onSend: (content: string) => void | Promise<void>;
   disabled?: boolean;
+  /** SessionView 側から「その他」クリックでフォーカスするための ref */
+  textareaRef?: RefObject<HTMLTextAreaElement | null>;
 }) {
   const [value, setValue] = useState("");
 
@@ -31,6 +35,7 @@ export function ChatInput({
     <div className="border-t p-3">
       <div className="flex gap-2">
         <Textarea
+          ref={textareaRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKeyDown}

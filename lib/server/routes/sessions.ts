@@ -120,8 +120,9 @@ export const sessionsRoute = new Hono()
       questionIndex: 0,
       conversation: [],
       extracted: session.extractedData,
+      taskSlug: session.taskSlug,
     });
-    const opener = `${questions.opener}\n\n${firstQuestion}`;
+    const opener = `${questions.opener}\n\n${firstQuestion.content}`;
     const [firstMessage] = await db
       .insert(messages)
       .values({
@@ -129,6 +130,7 @@ export const sessionsRoute = new Hono()
         sessionId: id,
         role: "assistant",
         content: opener,
+        meta: { choices: firstQuestion.choices },
       })
       .returning();
 

@@ -45,6 +45,7 @@ export function SessionView({
   const [activeTab, setActiveTab] = useState<LayoutTab>("chat");
   const flowSaveTimerRef = useRef<number | null>(null);
   const latestFlowLayoutRef = useRef<FlowLayout | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const isFinished = session.status === "completed";
   const allQuestionsAsked = session.currentQuestionIndex >= MAX_TURNS;
@@ -166,6 +167,16 @@ export function SessionView({
     } finally {
       setSending(false);
     }
+  };
+
+  // 選択肢ボタン: 通常選択肢はそのまま送信、null (その他) は ChatInput にフォーカス
+  const handleChoiceClick = (choice: string | null) => {
+    if (sending || isFinished) return;
+    if (choice === null) {
+      chatInputRef.current?.focus();
+      return;
+    }
+    void sendMessage(choice);
   };
 
   const selectedNodeDetail = (() => {
@@ -308,14 +319,22 @@ export function SessionView({
         <section
           className={`min-h-0 flex-col border-r ${activeTab === "chat" ? "flex" : "hidden"} lg:flex`}
         >
-          <Transcript messages={msgs} />
+          <Transcript
+            messages={msgs}
+            onChoiceClick={readonly ? undefined : handleChoiceClick}
+            disabled={sending || isFinished}
+          />
           {!readonly && error && (
             <div className="border-t bg-red-50 px-4 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
               {error}
             </div>
           )}
           {!readonly && (
-            <ChatInput onSend={sendMessage} disabled={sending || isFinished} />
+            <ChatInput
+              onSend={sendMessage}
+              disabled={sending || isFinished}
+              textareaRef={chatInputRef}
+            />
           )}
         </section>
         <section
