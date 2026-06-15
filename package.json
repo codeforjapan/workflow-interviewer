@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "db:generate": "node --env-file-if-exists=.env.local node_modules/drizzle-kit/bin.cjs generate",
+    "db:migrate": "node --env-file-if-exists=.env.local node_modules/drizzle-kit/bin.cjs migrate",
     "check:kb": "tsx scripts/check-kb-parser.ts",
     "check:slots": "tsx scripts/check-slots.ts",
     "check:kb-seed": "tsx scripts/check-kb-seed.ts",

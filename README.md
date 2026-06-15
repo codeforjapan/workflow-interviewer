@@ -32,8 +32,10 @@ cp .env.example .env.local
 ### マイグレーション適用
 
 ```bash
-pnpm drizzle-kit migrate
+pnpm db:migrate
 ```
+
+（`.env.local` を自動で読み込む。別の DB に適用する場合は `DATABASE_URL="<接続文字列>" pnpm db:migrate`）
 
 ### 開発サーバー起動
 
@@ -75,6 +77,39 @@ lib/
 drizzle/                            マイグレーション
 supabase/                           ローカル Supabase 設定
 ```
+
+## デプロイ (Vercel + Supabase) — デモ用
+
+### A. Supabase クラウド DB を作成
+
+1. [supabase.com](https://supabase.com) で新規プロジェクトを作成（リージョンは Tokyo `ap-northeast-1` 推奨）。DB パスワードを控える。
+2. プロジェクトの **Connect** から 2 種類の接続文字列を控える:
+   - **Session / Direct**（port `5432`）… マイグレーション適用用
+   - **Transaction pooler**（port `6543`、末尾 `?pgbouncer=true`）… アプリ実行用（サーバーレス向け）
+
+### B. マイグレーションを本番 DB へ適用（ローカルから）
+
+```bash
+DATABASE_URL="<Session/Direct 接続文字列 (5432)>" pnpm db:migrate
+```
+
+Supabase Studio の Table Editor で `sessions` / `messages` ができていれば OK。
+
+### C. Vercel にデプロイ
+
+1. Vercel で GitHub リポジトリをインポート（Framework は Next.js が自動検出。`main` ブランチを指定）。
+2. **Environment Variables** を設定:
+   - `DATABASE_URL` … Transaction pooler 接続文字列（port `6543`, `?pgbouncer=true`）
+   - `OPENAI_API_KEY` … OpenAI API キー
+3. Deploy。
+
+> KB（`docs/kb/`）は実行時にファイル読み込みするため、`next.config.ts` の `outputFileTracingIncludes` でサーバー関数にバンドルしている。
+
+### 動作確認
+
+- `https://<デプロイ先>/api/health` が 200 を返す
+- 新規セッション → 業務選択 → 回答 でキャンバスにフロー図が描画される
+- Vercel の Function ログに `KB workflow not found` / `DATABASE_URL is not set` が出ていない
 
 ## スコープ外 (後続スプリント)
 
