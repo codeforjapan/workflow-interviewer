@@ -11,12 +11,12 @@ import { buildJsonReport } from "@/lib/server/export/json";
 import { buildMarkdownReport } from "@/lib/server/export/markdown";
 import { recomputeGaps } from "@/lib/server/gap/recompute";
 import { questions } from "@/lib/server/interview/questions";
-import { SLOT_DEFS } from "@/lib/server/interview/slots";
+import { getSlotTemplate, SLOT_DEFS } from "@/lib/server/interview/slots";
 import { generateAdaptiveQuestion } from "@/lib/server/interview/followup";
 import { loadSeedConnections } from "@/lib/server/interview/seed";
 import { openai, MODELS } from "@/lib/server/openai";
 
-const DEFAULT_TASK_SLUG = "inkan-toroku";
+const DEFAULT_TASK_SLUG = "sonota";
 
 const sessionCreateSchema = z
   .object({
@@ -116,7 +116,7 @@ export const sessionsRoute = new Hono()
     const firstQuestion = await generateAdaptiveQuestion({
       sessionId: id,
       sessionStatus: session.status,
-      guideQuestion: SLOT_DEFS.taskName.template,
+      guideQuestion: getSlotTemplate("taskName", taskSlug),
       questionIndex: 0,
       conversation: [],
       extracted: session.extractedData,

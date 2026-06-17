@@ -53,7 +53,7 @@ export function WorkflowPickerButton({ workflows }: { workflows: WorkflowOption[
           <DialogHeader>
             <DialogTitle>業務を選んでセッションを開始</DialogTitle>
             <DialogDescription>
-              KB に登録されている業務から 1 つ選んでください。MVP では印鑑登録のみがアクティブです。
+              KB に登録されている業務から 1 つ選んでください。特定業務が該当しない場合は「その他」を選択してください。
             </DialogDescription>
           </DialogHeader>
 
