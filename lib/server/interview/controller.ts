@@ -10,6 +10,7 @@ import { questions } from "./questions";
 import { formatRiskCueAsGuide, loadRiskCues } from "./risks";
 import {
   chooseNextSlot,
+  getSlotTemplate,
   isFinished,
   isMinimumFilled,
   MAX_TURNS,
@@ -121,7 +122,7 @@ export async function handleUserTurn(params: {
       // incidents スロットが選ばれ、かつ riskCues があれば、
       // テンプレを「もし X が起きたら何が起きるか」型に差し替える。
       // ターン毎に cue をローテーションして同じ問いを連投しない。
-      let guideQuestion = SLOT_DEFS[slot].template;
+      let guideQuestion = getSlotTemplate(slot, session.taskSlug);
       if (slot === "incidents" && riskCues.length > 0) {
         const cue = riskCues[nextTurnCount % riskCues.length];
         guideQuestion = formatRiskCueAsGuide(cue);

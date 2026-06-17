@@ -33,6 +33,34 @@ import {
 import type { FlowLayout, SessionExtractedData } from "@/lib/db/schema";
 import type { ExtractedGap } from "@/lib/server/interview/schema";
 
+const GAP_KIND_META: Record<
+  ExtractedGap["kind"],
+  { label: string; description: string; className: string }
+> = {
+  missing: {
+    label: "不足",
+    description: "本来あるべき情報や手順が欠けている",
+    className: "bg-rose-100 text-rose-800 hover:bg-rose-200 dark:bg-rose-900/40 dark:text-rose-200",
+  },
+  add: {
+    label: "追加",
+    description: "標準フローへの追加が推奨されるステップ",
+    className: "bg-emerald-100 text-emerald-800 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200",
+  },
+  order: {
+    label: "順序",
+    description: "ステップの実行順序に問題がある",
+    className: "bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-200",
+  },
+  "local-rule": {
+    label: "独自",
+    description: "現場固有のルール・運用がある",
+    className: "bg-sky-100 text-sky-800 hover:bg-sky-200 dark:bg-sky-900/40 dark:text-sky-200",
+  },
+};
+
+const GAP_KIND_ORDER: ExtractedGap["kind"][] = ["missing", "add", "order", "local-rule"];
+
 const nodeTypes = {
   step: StepNode,
   connectionExternal: ConnectionExternalNode,
@@ -225,22 +253,40 @@ export function FlowCanvas({
         {workflowGaps.length > 0 && (
           <Panel position="top-right">
             <div className="rounded-md border bg-card p-2 text-xs shadow-sm">
-              <div className="mb-1 font-medium">
+              <div className="mb-2 font-medium">
                 ワークフロー全体のギャップ ({workflowGaps.length})
               </div>
-              <div className="flex max-w-[260px] flex-wrap gap-1">
-                {workflowGaps.map((g) => (
-                  <button
-                    key={g.id}
-                    type="button"
-                    onClick={() => setActiveGap(g)}
-                    className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700"
-                    title={g.reason}
-                  >
-                    {g.kind}
-                    {g.matchedKnownGap ? ` · ${g.matchedKnownGap}` : ""}
-                  </button>
-                ))}
+              <div className="max-w-[280px] space-y-2">
+                {GAP_KIND_ORDER.filter((kind) =>
+                  workflowGaps.some((g) => g.kind === kind),
+                ).map((kind) => {
+                  const meta = GAP_KIND_META[kind];
+                  const gaps = workflowGaps.filter((g) => g.kind === kind);
+                  return (
+                    <div key={kind}>
+                      <div
+                        className="mb-1 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400"
+                        title={meta.description}
+                      >
+                        {meta.label} ({gaps.length}) — {meta.description}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {gaps.map((g) => (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => setActiveGap(g)}
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${meta.className}`}
+                            title={`【${meta.label}】${meta.description}\n${g.reason}`}
+                          >
+                            {g.matchedKnownGap ?? g.reason.slice(0, 20)}
+                            {!g.matchedKnownGap && g.reason.length > 20 ? "…" : ""}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </Panel>

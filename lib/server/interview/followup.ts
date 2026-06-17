@@ -76,22 +76,7 @@ export async function generateAdaptiveQuestion(params: {
       messages: [
         {
           role: "system",
-          content: `あなたは自治体業務ヒアリングのインタビュアーです。
-次に聞くべき質問を1つだけ生成してください。
-
-質問本文のルール:
-- 標準フローや docs/workflow 抜粋の文脈に沿った具体化を優先する
-- 推測や断定はしない
-- 1文・120文字以内
-- 職員が答えやすい自然な口調
-- 目的は、taskName/purpose/legalBasis/stakeholders/steps を埋めること
-
-選択肢 (choices) の出し方:
-- 「曖昧な短い回答 (例: 必要書類があります / 担当課に回します) を職員がしたあとに、具体名を尋ねる」ような追い質問のときは、標準フロー/抜粋で想定される具体名を choices として 2〜5 件挙げる
-- 自由記述が必要な質問 (理由・経緯・課題感など) では choices は空配列にする
-- 各 choice は 1〜30 文字、職員が即答できる短い名詞句にする
-- 「その他」は含めない (UI 側で自動的に追加される)
-- 提示済みの選択肢と重複させない`,
+          content: buildSystemPrompt(taskSlug),
         },
         {
           role: "user",
@@ -177,6 +162,40 @@ async function collectMarkdownFiles(rootDir: string): Promise<string[]> {
     }),
   );
   return all.flat();
+}
+
+/** taskSlug に応じてインタビュアーの役割・ルールを切り替える */
+function buildSystemPrompt(taskSlug?: string | null): string {
+  const isSonota = taskSlug === "sonota";
+
+  const role = isSonota
+    ? "あなたは組織内業務のヒアリング担当AIです。相談受付から入金・案件終了までの業務フローについてインタビューします。"
+    : "あなたは自治体業務ヒアリングのインタビュアーです。";
+
+  const fillGoal = isSonota
+    ? "- 目的は、taskName（業務・案件名）/ purpose（目的・背景）/ stakeholders（関係者・担当部署）/ steps（フローのステップ）を埋めること"
+    : "- 目的は、taskName/purpose/legalBasis/stakeholders/steps を埋めること";
+
+  const choiceHint = isSonota
+    ? `- 「曖昧な短い回答のあとに具体名を尋ねる」追い質問では、標準フロー（相談受付・提案・社内承認・契約・稼働・請求など）で想定される具体名を choices として 2〜5 件挙げる`
+    : `- 「曖昧な短い回答 (例: 必要書類があります / 担当課に回します) を職員がしたあとに、具体名を尋ねる」ような追い質問のときは、標準フロー/抜粋で想定される具体名を choices として 2〜5 件挙げる`;
+
+  return `${role}
+次に聞くべき質問を1つだけ生成してください。
+
+質問本文のルール:
+- 標準フローや docs/workflow 抜粋の文脈に沿った具体化を優先する
+- 推測や断定はしない
+- 1文・120文字以内
+- 回答者が答えやすい自然な口調
+${fillGoal}
+
+選択肢 (choices) の出し方:
+${choiceHint}
+- 自由記述が必要な質問 (理由・経緯・課題感など) では choices は空配列にする
+- 各 choice は 1〜30 文字、回答者が即答できる短い名詞句にする
+- 「その他」は含めない (UI 側で自動的に追加される)
+- 提示済みの選択肢と重複させない`;
 }
 
 function selectRelevantSnippets(snippets: WorkflowSnippet[], queries: string[]) {

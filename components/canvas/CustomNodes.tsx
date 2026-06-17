@@ -20,25 +20,29 @@ import type { ExtractedGap } from "@/lib/server/interview/schema";
 
 const GAP_KIND_META: Record<
   ExtractedGap["kind"],
-  { label: string; icon: typeof PlusCircleIcon; className: string }
+  { label: string; description: string; icon: typeof PlusCircleIcon; className: string }
 > = {
   add: {
-    label: "add",
+    label: "追加",
+    description: "標準フローへの追加が推奨されるステップ",
     icon: PlusCircleIcon,
     className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
   },
   missing: {
-    label: "missing",
+    label: "不足",
+    description: "本来あるべき情報や手順が欠けている",
     icon: MinusCircleIcon,
     className: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
   },
   order: {
-    label: "order",
+    label: "順序",
+    description: "ステップの実行順序に問題がある",
     icon: CornerDownRightIcon,
     className: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
   },
   "local-rule": {
-    label: "local",
+    label: "独自",
+    description: "現場固有のルール・運用がある",
     icon: ArrowRightCircleIcon,
     className: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
   },
@@ -93,7 +97,7 @@ export function StepNode({
                   data.onGapClick?.(g);
                 }}
                 className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium ${meta.className}`}
-                title={g.reason}
+                title={`【${meta.label}】${meta.description}\n${g.reason}`}
               >
                 <Icon className="size-3" />
                 {meta.label}
