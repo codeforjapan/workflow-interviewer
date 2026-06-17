@@ -202,3 +202,37 @@ export const MIN_TURNS_BEFORE_FINISH = 4;
 
 /** 安全弁: このターン数に達したら強制的にクロージングへ。 */
 export const MAX_TURNS = 20;
+
+/**
+ * sonota（汎用業務フロー）向けのスロットテンプレート。
+ * 自治体語彙（住民・法令・条例）を民間業務語彙に置き換えている。
+ */
+const SONOTA_SLOT_TEMPLATES: Partial<Record<SlotKey, string>> = {
+  taskName:
+    "まず、今回整理する業務・案件の名称（通称があればそれも）を教えてください。",
+  purpose:
+    "この業務の目的・背景を教えてください。どんな課題を解決したい、あるいはどんな価値を提供したいですか？",
+  legalBasis:
+    "社内規定・契約形態・利用しているツール（boardなど）があれば教えてください。",
+  stakeholders:
+    "主な関係者を教えてください（クライアント担当、社内承認者、パートナー、請求先など）。",
+  steps:
+    "業務の標準的な流れを、最初の問い合わせ・相談受付から入金・案件終了まで順番に教えてください。",
+  exceptions:
+    "失注・ペンディング・差し戻し・再見積もりなど、通常フローから外れるケースがあれば教えてください。",
+  connections:
+    "他の部署・案件・外部パートナーとの連携が必要な場面はありますか？（例: 社内他部門への引き継ぎ、協力会社への発注など）",
+  incidents:
+    "この業務で特にミスしやすい点・抜け漏れしやすい点・過去にトラブルになったことがあれば教えてください。",
+};
+
+/**
+ * スロットのガイド質問テンプレートを返す。
+ * taskSlug が "sonota" のときは民間業務向けテンプレートを優先する。
+ */
+export function getSlotTemplate(key: SlotKey, taskSlug?: string | null): string {
+  if (taskSlug === "sonota") {
+    return SONOTA_SLOT_TEMPLATES[key] ?? SLOT_DEFS[key].template;
+  }
+  return SLOT_DEFS[key].template;
+}
