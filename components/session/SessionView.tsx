@@ -42,6 +42,8 @@ export function SessionView({
     "idle",
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
+  const [chatValue, setChatValue] = useState("");
   const [activeTab, setActiveTab] = useState<LayoutTab>("chat");
   const flowSaveTimerRef = useRef<number | null>(null);
   const latestFlowLayoutRef = useRef<FlowLayout | null>(null);
@@ -162,6 +164,7 @@ export function SessionView({
       const data = (await res.json()) as { session: Session; messages: Message[] };
       setSession(data.session);
       setMsgs(data.messages);
+      setSelectedChoices([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "unknown error");
     } finally {
@@ -169,14 +172,41 @@ export function SessionView({
     }
   };
 
-  // 選択肢ボタン: 通常選択肢はそのまま送信、null (その他) は ChatInput にフォーカス
-  const handleChoiceClick = (choice: string | null) => {
+  // 選択済みの選択肢 + 自由入力テキストを1つのメッセージ文字列に合成する
+  const composeAnswer = (choices: string[], freeText: string) =>
+    [...choices, freeText.trim()].filter(Boolean).join("、");
+
+  // 選択肢ボタン: クリックでトグル選択するのみ（即送信しない）
+  const handleToggleChoice = (choice: string) => {
     if (sending || isFinished) return;
-    if (choice === null) {
-      chatInputRef.current?.focus();
-      return;
-    }
-    void sendMessage(choice);
+    setSelectedChoices((prev) =>
+      prev.includes(choice) ? prev.filter((c) => c !== choice) : [...prev, choice],
+    );
+  };
+
+  // 「まとめて送信」ボタン: 選択済みの選択肢 (+ 入力中のテキストがあれば合成) を送信
+  const handleSubmitChoices = () => {
+    if (sending || isFinished || selectedChoices.length === 0) return;
+    const combined = composeAnswer(selectedChoices, chatValue);
+    setChatValue("");
+    void sendMessage(combined);
+  };
+
+  // 「その他」ボタン: 自由入力欄にフォーカス（選択済みの選択肢は残し、送信時に合成する）
+  const handleOtherClick = () => {
+    if (sending || isFinished) return;
+    chatInputRef.current?.focus();
+  };
+
+  // ChatInput からの送信: 選択済みの選択肢があれば自由入力と合成して1メッセージにする
+  const handleChatSend = async () => {
+    const combined = composeAnswer(selectedChoices, chatValue);
+    setChatValue("");
+    await sendMessage(combined);
+  };
+
+  const handleRemoveChoice = (choice: string) => {
+    setSelectedChoices((prev) => prev.filter((c) => c !== choice));
   };
 
   const selectedNodeDetail = (() => {
@@ -321,7 +351,10 @@ export function SessionView({
         >
           <Transcript
             messages={msgs}
-            onChoiceClick={readonly ? undefined : handleChoiceClick}
+            selectedChoices={selectedChoices}
+            onToggleChoice={readonly ? undefined : handleToggleChoice}
+            onSubmitChoices={readonly ? undefined : handleSubmitChoices}
+            onOtherClick={readonly ? undefined : handleOtherClick}
             disabled={sending || isFinished}
           />
           {!readonly && error && (
@@ -331,9 +364,13 @@ export function SessionView({
           )}
           {!readonly && (
             <ChatInput
-              onSend={sendMessage}
+              value={chatValue}
+              onChange={setChatValue}
+              onSend={handleChatSend}
               disabled={sending || isFinished}
               textareaRef={chatInputRef}
+              selectedChoices={selectedChoices}
+              onRemoveChoice={handleRemoveChoice}
             />
           )}
         </section>
