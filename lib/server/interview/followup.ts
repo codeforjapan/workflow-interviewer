@@ -28,7 +28,7 @@ export type FollowupResult = {
   choices: string[];
 };
 
-export async function generateAdaptiveQuestion(params: {
+export type AdaptiveQuestionParams = {
   sessionId: string;
   sessionStatus: "active" | "completed";
   guideQuestion: string;
@@ -36,7 +36,10 @@ export async function generateAdaptiveQuestion(params: {
   conversation: InterviewMessage[];
   extracted: SessionExtractedData;
   taskSlug?: string | null;
-}): Promise<FollowupResult> {
+};
+
+/** parse() / stream() 共通のリクエストパラメータ（プロンプト構築）を組み立てる */
+async function buildFollowupRequest(params: AdaptiveQuestionParams) {
   const {
     sessionId,
     sessionStatus,
@@ -46,41 +49,40 @@ export async function generateAdaptiveQuestion(params: {
     extracted,
     taskSlug,
   } = params;
-  try {
-    const [snippets, kbStandardFlow] = await Promise.all([
-      getWorkflowSnippets(),
-      taskSlug ? loadStandardFlowSummary(taskSlug) : Promise.resolve(null),
-    ]);
-    const lastUserInput =
-      [...conversation].reverse().find((m) => m.role === "user")?.content ?? "";
-    const selected = selectRelevantSnippets(snippets, [
-      extracted.taskName ?? "",
-      lastUserInput,
-      guideQuestion,
-    ]);
-    const context = selected.map((s) => `- ${s.file}\n${s.content}`).join("\n\n");
-    const conversationText = conversation
-      .slice(-8)
-      .map((m) => `${m.role === "user" ? "職員" : "AI"}: ${m.content}`)
-      .join("\n");
+  const [snippets, kbStandardFlow] = await Promise.all([
+    getWorkflowSnippets(),
+    taskSlug ? loadStandardFlowSummary(taskSlug) : Promise.resolve(null),
+  ]);
+  const lastUserInput =
+    [...conversation].reverse().find((m) => m.role === "user")?.content ?? "";
+  const selected = selectRelevantSnippets(snippets, [
+    extracted.taskName ?? "",
+    lastUserInput,
+    guideQuestion,
+  ]);
+  const context = selected.map((s) => `- ${s.file}\n${s.content}`).join("\n\n");
+  const conversationText = conversation
+    .slice(-8)
+    .map((m) => `${m.role === "user" ? "職員" : "AI"}: ${m.content}`)
+    .join("\n");
 
-    const kbFlowSection = kbStandardFlow && kbStandardFlow.mermaidSources.length > 0
-      ? `\n\n対象業務「${kbStandardFlow.displayName}」の標準フロー (mermaid 抜粋):\n${kbStandardFlow.mermaidSources
-          .join("\n---\n")
-          .slice(0, MAX_KB_FLOW_CHARS)}`
-      : "";
+  const kbFlowSection = kbStandardFlow && kbStandardFlow.mermaidSources.length > 0
+    ? `\n\n対象業務「${kbStandardFlow.displayName}」の標準フロー (mermaid 抜粋):\n${kbStandardFlow.mermaidSources
+        .join("\n---\n")
+        .slice(0, MAX_KB_FLOW_CHARS)}`
+    : "";
 
-    const completion = await openai.chat.completions.parse({
-      model: MODELS.chat,
-      temperature: 0.4,
-      messages: [
-        {
-          role: "system",
-          content: buildSystemPrompt(taskSlug),
-        },
-        {
-          role: "user",
-          content: `セッション情報:
+  return {
+    model: MODELS.chat,
+    temperature: 0.4,
+    messages: [
+      {
+        role: "system" as const,
+        content: buildSystemPrompt(taskSlug),
+      },
+      {
+        role: "user" as const,
+        content: `セッション情報:
 - sessionId: ${sessionId}
 - sessionStatus: ${sessionStatus}
 - currentQuestionIndex: ${questionIndex}
@@ -96,22 +98,75 @@ ${JSON.stringify(extracted)}
 
 docs/workflow 抜粋:
 ${context}${kbFlowSection}`,
-        },
-      ],
-      response_format: zodResponseFormat(FollowupSchema, "next_followup"),
-    });
+      },
+    ],
+    response_format: zodResponseFormat(FollowupSchema, "next_followup"),
+  };
+}
 
+function finalizeChoices(choices: string[]): string[] {
+  return uniq(choices)
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0 && c.length <= 40)
+    .slice(0, MAX_CHOICES);
+}
+
+export async function generateAdaptiveQuestion(
+  params: AdaptiveQuestionParams,
+): Promise<FollowupResult> {
+  try {
+    const request = await buildFollowupRequest(params);
+    const completion = await openai.chat.completions.parse(request);
     const parsed = completion.choices[0]?.message.parsed;
     if (!parsed || !parsed.content.trim()) {
-      return { content: guideQuestion, choices: [] };
+      return { content: params.guideQuestion, choices: [] };
     }
-    const dedupedChoices = uniq(parsed.choices)
-      .map((c) => c.trim())
-      .filter((c) => c.length > 0 && c.length <= 40)
-      .slice(0, MAX_CHOICES);
-    return { content: parsed.content.trim(), choices: dedupedChoices };
+    return { content: parsed.content.trim(), choices: finalizeChoices(parsed.choices) };
   } catch {
-    return { content: guideQuestion, choices: [] };
+    return { content: params.guideQuestion, choices: [] };
+  }
+}
+
+export type StreamAdaptiveQuestionResult = FollowupResult & {
+  /** true の場合 content/choices は guideQuestion へのフォールバック（LLM 呼び出し失敗） */
+  usedFallback: boolean;
+};
+
+/**
+ * generateAdaptiveQuestion のストリーミング版。
+ * onDelta には本文 (content) が確定していく途中経過を都度渡す（差分ではなく毎回「現時点までの全文」）。
+ * Structured Outputs の JSON は `content` フィールドが `choices` より先に定義されているため、
+ * ストリーム中の `content.delta` イベントの `parsed.content` は choices の完成前に埋まっていく。
+ */
+export async function streamAdaptiveQuestion(
+  params: AdaptiveQuestionParams & { onDelta: (contentSoFar: string) => void },
+): Promise<StreamAdaptiveQuestionResult> {
+  const { onDelta, ...rest } = params;
+  try {
+    const request = await buildFollowupRequest(rest);
+    const stream = openai.chat.completions.stream(request);
+    let lastContent = "";
+    stream.on("content.delta", (event) => {
+      const parsed = event.parsed as { content?: unknown } | null;
+      const contentSoFar =
+        parsed && typeof parsed.content === "string" ? parsed.content : undefined;
+      if (contentSoFar !== undefined && contentSoFar !== lastContent) {
+        lastContent = contentSoFar;
+        onDelta(contentSoFar);
+      }
+    });
+    const finalCompletion = await stream.finalChatCompletion();
+    const parsed = finalCompletion.choices[0]?.message.parsed;
+    if (!parsed || !parsed.content.trim()) {
+      return { content: rest.guideQuestion, choices: [], usedFallback: true };
+    }
+    return {
+      content: parsed.content.trim(),
+      choices: finalizeChoices(parsed.choices),
+      usedFallback: false,
+    };
+  } catch {
+    return { content: rest.guideQuestion, choices: [], usedFallback: true };
   }
 }
 
