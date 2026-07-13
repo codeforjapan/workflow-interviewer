@@ -10,6 +10,7 @@ import { handleUserTurn } from "@/lib/server/interview/controller";
 import { buildJsonReport } from "@/lib/server/export/json";
 import { buildMarkdownReport } from "@/lib/server/export/markdown";
 import { recomputeGaps } from "@/lib/server/gap/recompute";
+import { computeInterviewProgress } from "@/lib/server/interview/progress";
 import { questions } from "@/lib/server/interview/questions";
 import { getSlotTemplate, SLOT_DEFS } from "@/lib/server/interview/slots";
 import { generateAdaptiveQuestion } from "@/lib/server/interview/followup";
@@ -138,7 +139,7 @@ export const sessionsRoute = new Hono()
   })
   /**
    * GET /api/sessions/:id
-   * セッション + 全メッセージを返す。
+   * セッション + 全メッセージ + 進捗 (UX3) を返す。
    */
   .get("/:id", async (c) => {
     const id = c.req.param("id");
@@ -151,8 +152,14 @@ export const sessionsRoute = new Hono()
       where: eq(messages.sessionId, id),
       orderBy: asc(messages.createdAt),
     });
+    // UX3: 進捗はDB永続化しない派生データ。都度計算して返す。
+    const progress = await computeInterviewProgress({
+      extracted: session.extractedData,
+      turnCount: session.currentQuestionIndex,
+      taskSlug: session.taskSlug,
+    });
 
-    return c.json({ session, messages: sessionMessages });
+    return c.json({ session, messages: sessionMessages, progress });
   })
   /**
    * POST /api/sessions/:id/messages
@@ -246,7 +253,12 @@ export const sessionsRoute = new Hono()
         .set({ extractedData: { ...session.extractedData, gaps, cautionFlags } })
         .where(eq(sessions.id, id))
         .returning();
-      return c.json({ session: updated });
+      const progress = await computeInterviewProgress({
+        extracted: updated.extractedData,
+        turnCount: updated.currentQuestionIndex,
+        taskSlug: updated.taskSlug,
+      });
+      return c.json({ session: updated, progress });
     } catch (err) {
       console.error("[POST /sessions/:id/gap-recompute] failed", err);
       const message = err instanceof Error ? err.message : "unknown error";
@@ -365,5 +377,10 @@ JSON形式で回答してください: {"category": "<カテゴリ名>", "summar
       })
       .where(eq(sessions.id, id))
       .returning();
-    return c.json({ session: updated });
+    const progress = await computeInterviewProgress({
+      extracted: updated.extractedData,
+      turnCount: updated.currentQuestionIndex,
+      taskSlug: updated.taskSlug,
+    });
+    return c.json({ session: updated, progress });
   });
