@@ -11,6 +11,7 @@ import {
   formatNodeCoverageAsGuide,
   shouldBoostIncidents,
 } from "./nodeCoverage";
+import { buildInterviewProgress } from "./progress";
 import { questions } from "./questions";
 import { formatRiskCueAsGuide, loadRiskCues } from "./risks";
 import { chooseNextSlot, getSlotTemplate, isFinished, MAX_TURNS, SLOT_DEFS, type SlotBoosts } from "./slots";
@@ -22,7 +23,8 @@ const INCIDENTS_RISK_BOOST = 50;
  * 1. user メッセージ保存
  * 2. 構造化抽出を実行して extractedData を更新
  * 3. スロット駆動で次の質問 (or クロージング) を決定し assistant メッセージとして保存
- * 4. session.currentQuestionIndex を進める。終了時は MAX_TURNS まで進めて UI に "完了" を促す
+ * 4. session.currentQuestionIndex を実ターン数として更新 (MAX_TURNS で頭打ち。絶対上限のみを意味する)
+ * 5. progress (完了可否 + 必須スロット充足 + 本筋ノード被覆) を組み立てて返す
  */
 export async function handleUserTurn(params: {
   sessionId: string;
@@ -159,9 +161,11 @@ export async function handleUserTurn(params: {
     meta: { choices: nextChoices },
   });
 
-  // 4. session 更新。終了時は currentQuestionIndex を MAX_TURNS にして UI の "完了" ボタンを有効化。
-  const updatedIndex =
-    nextContent === questions.closing ? MAX_TURNS : nextTurnCount;
+  // 4. session 更新。currentQuestionIndex は常に実ターン数 (MAX_TURNS で頭打ち)。
+  //    UX3: 以前はクロージング時に MAX_TURNS へ強制ジャンプさせ、これを完了ボタンの
+  //    活性シグナルとして使っていたが、早期終了セッションが「ターン20/20」と誤表示される
+  //    原因になっていたため廃止した。完了可否は progress.readyToFinish で判定する。
+  const updatedIndex = Math.min(nextTurnCount, MAX_TURNS);
 
   const [updatedSession] = await db
     .update(sessions)
@@ -177,5 +181,12 @@ export async function handleUserTurn(params: {
     orderBy: asc(messages.createdAt),
   });
 
-  return { session: updatedSession, messages: allMessages };
+  // UX3: 直前に計算済みの nodeCoverage を再利用し、KB の二重読み込みを避ける。
+  const progress = buildInterviewProgress({
+    extracted: updatedExtracted,
+    turnCount: updatedIndex,
+    nodeCoverage,
+  });
+
+  return { session: updatedSession, messages: allMessages, progress };
 }

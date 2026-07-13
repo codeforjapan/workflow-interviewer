@@ -12,13 +12,21 @@ const OTHER_LABEL = "その他";
 
 export function Transcript({
   messages,
-  onChoiceClick,
+  selectedChoices = [],
+  onToggleChoice,
+  onSubmitChoices,
+  onOtherClick,
   disabled,
 }: {
   messages: Message[];
-  /** 選択肢ボタンが押されたときのコールバック。
-   *  通常選択肢は引数のテキストをそのまま送信、null は「その他」(自由入力フォーカス)。 */
-  onChoiceClick?: (choice: string | null) => void;
+  /** 現在トグル選択中の選択肢一覧（複数選択可） */
+  selectedChoices?: string[];
+  /** 選択肢ボタンが押されたときのコールバック。選択状態をトグルするのみで即送信はしない。 */
+  onToggleChoice?: (choice: string) => void;
+  /** 「まとめて送信」ボタン押下時のコールバック */
+  onSubmitChoices?: () => void;
+  /** 「その他」ボタン押下時のコールバック (自由入力フォーカス) */
+  onOtherClick?: () => void;
   /** チャット送信中などで選択肢を無効化したい場合 */
   disabled?: boolean;
 }) {
@@ -64,27 +72,46 @@ export function Transcript({
                 {m.content}
               </div>
               {showChoices && (
-                <div className="flex max-w-[85%] flex-wrap gap-1.5">
-                  {choices.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => onChoiceClick?.(c)}
-                      disabled={disabled || !onChoiceClick}
-                      className="rounded-full border border-zinc-300 bg-white px-3 py-1 text-xs text-zinc-800 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                    >
-                      {c}
-                    </button>
-                  ))}
+                <div className="flex max-w-[85%] flex-wrap items-center gap-1.5">
+                  {choices.map((c) => {
+                    const isSelected = selectedChoices.includes(c);
+                    return (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => onToggleChoice?.(c)}
+                        disabled={disabled || !onToggleChoice}
+                        aria-pressed={isSelected}
+                        className={cn(
+                          "rounded-full border px-3 py-1 text-xs transition disabled:cursor-not-allowed disabled:opacity-50",
+                          isSelected
+                            ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                            : "border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800",
+                        )}
+                      >
+                        {c}
+                      </button>
+                    );
+                  })}
                   <button
                     type="button"
-                    onClick={() => onChoiceClick?.(null)}
-                    disabled={disabled || !onChoiceClick}
+                    onClick={() => onOtherClick?.()}
+                    disabled={disabled || !onOtherClick}
                     className="rounded-full border border-dashed border-zinc-300 bg-white px-3 py-1 text-xs text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
                     title="自由入力で答える"
                   >
                     {OTHER_LABEL}
                   </button>
+                  {selectedChoices.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => onSubmitChoices?.()}
+                      disabled={disabled || !onSubmitChoices}
+                      className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      選択を送信 ({selectedChoices.length})
+                    </button>
+                  )}
                 </div>
               )}
             </div>

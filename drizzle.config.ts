@@ -1,7 +1,7 @@
-import { config } from "dotenv";
 import { defineConfig } from "drizzle-kit";
 
-config({ path: ".env.local" });
+// 環境変数は npm script の `node --env-file-if-exists=.env.local` 経由で読み込む
+// (本番マイグレーションは `DATABASE_URL=... pnpm db:migrate` のようにインラインで渡す)。
 
 export default defineConfig({
   schema: "./lib/db/schema.ts",

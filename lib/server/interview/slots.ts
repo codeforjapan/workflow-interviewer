@@ -22,6 +22,8 @@ type SlotDef = {
   keywords: readonly string[];
   /** 最低充足ゲート (isFinished) で満たすべきかどうか。 */
   requiredForMinimum: boolean;
+  /** UX3: 進捗チェックリスト等の表示用の短いラベル。 */
+  shortLabel: string;
 };
 
 export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
@@ -31,6 +33,7 @@ export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
     template: "まず、今回整理する業務の正式名称（通称があればそれも）を教えてください。",
     keywords: ["業務名", "名称"],
     requiredForMinimum: true,
+    shortLabel: "業務名",
   },
   purpose: {
     key: "purpose",
@@ -39,6 +42,7 @@ export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
       "この業務の目的・達成したい状態を教えてください。住民にとっての価値もあれば合わせてお願いします。",
     keywords: ["目的", "達成", "ゴール"],
     requiredForMinimum: true,
+    shortLabel: "目的",
   },
   legalBasis: {
     key: "legalBasis",
@@ -47,6 +51,7 @@ export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
       "根拠となる法令・条例・要綱・通知などを、分かる範囲で教えてください。",
     keywords: ["法令", "条例", "要綱", "通知", "根拠"],
     requiredForMinimum: true,
+    shortLabel: "根拠法令",
   },
   stakeholders: {
     key: "stakeholders",
@@ -55,6 +60,7 @@ export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
       "主な関係者を教えてください（住民、窓口担当、審査担当、他部署、外部機関など）。",
     keywords: ["関係者", "担当", "部署", "外部"],
     requiredForMinimum: true,
+    shortLabel: "関係者",
   },
   steps: {
     key: "steps",
@@ -63,6 +69,7 @@ export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
       "業務の標準的な流れを、開始のきっかけから完了まで順番に教えてください。",
     keywords: ["流れ", "手順", "ステップ", "段取り"],
     requiredForMinimum: true,
+    shortLabel: "業務の流れ",
   },
   exceptions: {
     key: "exceptions",
@@ -71,6 +78,7 @@ export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
       "差し戻し・再申請・保留など、通常フローから外れる例外ケースがあれば教えてください。",
     keywords: ["例外", "差し戻し", "保留", "再申請", "イレギュラー"],
     requiredForMinimum: false,
+    shortLabel: "例外フロー",
   },
   connections: {
     key: "connections",
@@ -79,6 +87,7 @@ export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
       "他業務への連携や、同時に案内が必要な手続きはありますか？（例: 国保・年金・児童手当・他部署への引き継ぎなど）",
     keywords: ["連携", "他業務", "案内", "引き継ぎ", "つながり"],
     requiredForMinimum: false,
+    shortLabel: "他業務連携",
   },
   incidents: {
     key: "incidents",
@@ -87,6 +96,7 @@ export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
       "この業務で特にミスしやすい点・確認漏れしやすい点・ヒヤリハットがあれば教えてください。",
     keywords: ["ミス", "ヒヤリ", "事故", "トラブル", "漏れ"],
     requiredForMinimum: false,
+    shortLabel: "ヒヤリハット",
   },
   gaps: {
     /** 標準フローとのギャップは KB マッチングで算出する派生スロット（C1/C2 で実装）。
@@ -96,6 +106,7 @@ export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
     template: "",
     keywords: [],
     requiredForMinimum: false,
+    shortLabel: "標準との差分",
   },
 };
 

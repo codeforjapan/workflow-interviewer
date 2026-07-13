@@ -4,6 +4,10 @@ import { sessions } from "@/lib/db/schema";
 import { listAllWorkflows } from "@/lib/kb/loader";
 import { DashboardClient } from "@/components/dashboard/DashboardClient";
 
+// ダッシュボードは常に最新の DB 状態を表示する。ビルド時の静的プリレンダリング
+// (DB 未接続で失敗する) を避け、リクエスト毎に動的レンダリングする。
+export const dynamic = "force-dynamic";
+
 export default async function Home() {
   const [allSessions, workflows] = await Promise.all([
     db.query.sessions.findMany({ orderBy: desc(sessions.createdAt) }),

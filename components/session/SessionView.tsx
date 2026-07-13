@@ -10,11 +10,13 @@ import { ChatInput } from "@/components/chat/ChatInput";
 import { FlowCanvas } from "@/components/canvas/FlowCanvas";
 import { Button } from "@/components/ui/button";
 import { CautionBar } from "@/components/session/CautionBar";
+import { ProgressBar } from "@/components/session/ProgressBar";
 import { ShareUrlBox } from "@/components/session/ShareUrlBox";
 import {
   StandardFlowPanel,
   type StandardFlowSummary,
 } from "@/components/session/StandardFlowPanel";
+import type { InterviewProgress } from "@/lib/server/interview/progress";
 import { MAX_TURNS } from "@/lib/server/interview/slots";
 
 type Session = InferSelectModel<typeof sessions>;
@@ -25,36 +27,45 @@ type LayoutTab = "standard" | "chat" | "canvas";
 export function SessionView({
   initialSession,
   initialMessages,
+  initialProgress,
   standardFlow,
   readonly = false,
 }: {
   initialSession: Session;
   initialMessages: Message[];
+  initialProgress: InterviewProgress;
   standardFlow: StandardFlowSummary | null;
   /** D4: 共有用 /sessions/[id]/view からの呼び出し時に編集系 UI を全て隠す */
   readonly?: boolean;
 }) {
   const [session, setSession] = useState(initialSession);
   const [msgs, setMsgs] = useState(initialMessages);
+  const [progress, setProgress] = useState(initialProgress);
   const [sending, setSending] = useState(false);
   const [flowSaveState, setFlowSaveState] = useState<"idle" | "saving" | "error">("idle");
   const [gapRecomputeState, setGapRecomputeState] = useState<"idle" | "running" | "error">(
     "idle",
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
+  const [chatValue, setChatValue] = useState("");
   const [activeTab, setActiveTab] = useState<LayoutTab>("chat");
   const flowSaveTimerRef = useRef<number | null>(null);
   const latestFlowLayoutRef = useRef<FlowLayout | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const isFinished = session.status === "completed";
-  const allQuestionsAsked = session.currentQuestionIndex >= MAX_TURNS;
+  // UX3: MAX_TURNS到達は絶対上限としての完了可否。progress.readyToFinish は
+  // 必須スロット充足 + 最低ヒアリング回数を満たした早期終了の完了可否。
+  const atMaxTurns = session.currentQuestionIndex >= MAX_TURNS;
+  const canComplete = atMaxTurns || progress.readyToFinish;
 
   const completeSession = async () => {
     const res = await fetch(`/api/sessions/${session.id}/complete`, { method: "POST" });
     if (!res.ok) return;
-    const data = (await res.json()) as { session: Session };
+    const data = (await res.json()) as { session: Session; progress: InterviewProgress };
     setSession(data.session);
+    setProgress(data.progress);
     // D5: 完了時に Markdown レポート + 拡張 JSON を順番にダウンロード
     triggerExportDownload(data.session.id, "md");
     triggerExportDownload(data.session.id, "json");
@@ -73,8 +84,9 @@ export function SessionView({
         method: "POST",
       });
       if (!res.ok) throw new Error(`status ${res.status}`);
-      const data = (await res.json()) as { session: Session };
+      const data = (await res.json()) as { session: Session; progress: InterviewProgress };
       setSession(data.session);
+      setProgress(data.progress);
       setGapRecomputeState("idle");
     } catch (e) {
       console.error("[recomputeGaps] failed", e);
@@ -159,9 +171,15 @@ export function SessionView({
         console.error("message POST failed", res.status, body);
         throw new Error(`${res.status}: ${body.slice(0, 300)}`);
       }
-      const data = (await res.json()) as { session: Session; messages: Message[] };
+      const data = (await res.json()) as {
+        session: Session;
+        messages: Message[];
+        progress: InterviewProgress;
+      };
       setSession(data.session);
       setMsgs(data.messages);
+      setProgress(data.progress);
+      setSelectedChoices([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "unknown error");
     } finally {
@@ -169,14 +187,41 @@ export function SessionView({
     }
   };
 
-  // 選択肢ボタン: 通常選択肢はそのまま送信、null (その他) は ChatInput にフォーカス
-  const handleChoiceClick = (choice: string | null) => {
+  // 選択済みの選択肢 + 自由入力テキストを1つのメッセージ文字列に合成する
+  const composeAnswer = (choices: string[], freeText: string) =>
+    [...choices, freeText.trim()].filter(Boolean).join("、");
+
+  // 選択肢ボタン: クリックでトグル選択するのみ（即送信しない）
+  const handleToggleChoice = (choice: string) => {
     if (sending || isFinished) return;
-    if (choice === null) {
-      chatInputRef.current?.focus();
-      return;
-    }
-    void sendMessage(choice);
+    setSelectedChoices((prev) =>
+      prev.includes(choice) ? prev.filter((c) => c !== choice) : [...prev, choice],
+    );
+  };
+
+  // 「まとめて送信」ボタン: 選択済みの選択肢 (+ 入力中のテキストがあれば合成) を送信
+  const handleSubmitChoices = () => {
+    if (sending || isFinished || selectedChoices.length === 0) return;
+    const combined = composeAnswer(selectedChoices, chatValue);
+    setChatValue("");
+    void sendMessage(combined);
+  };
+
+  // 「その他」ボタン: 自由入力欄にフォーカス（選択済みの選択肢は残し、送信時に合成する）
+  const handleOtherClick = () => {
+    if (sending || isFinished) return;
+    chatInputRef.current?.focus();
+  };
+
+  // ChatInput からの送信: 選択済みの選択肢があれば自由入力と合成して1メッセージにする
+  const handleChatSend = async () => {
+    const combined = composeAnswer(selectedChoices, chatValue);
+    setChatValue("");
+    await sendMessage(combined);
+  };
+
+  const handleRemoveChoice = (choice: string) => {
+    setSelectedChoices((prev) => prev.filter((c) => c !== choice));
   };
 
   const selectedNodeDetail = (() => {
@@ -275,7 +320,17 @@ export function SessionView({
               レポート再ダウンロード
             </Button>
           ) : (
-            <Button onClick={completeSession} disabled={!allQuestionsAsked}>
+            <Button
+              onClick={completeSession}
+              disabled={!canComplete}
+              title={
+                canComplete
+                  ? undefined
+                  : progress.requiredFilledCount < progress.requiredTotalCount
+                    ? `必須項目が ${progress.requiredFilledCount}/${progress.requiredTotalCount} 件です`
+                    : "最低ヒアリング回数に達していません"
+              }
+            >
               完了してレポート出力
             </Button>
           ))}
@@ -286,6 +341,12 @@ export function SessionView({
           )}
         </div>
       </header>
+      <ProgressBar
+        progress={progress}
+        turnCount={session.currentQuestionIndex}
+        maxTurns={MAX_TURNS}
+        completed={isFinished}
+      />
       <CautionBar flags={session.extractedData.cautionFlags ?? []} />
       {/* lg 未満: タブで切替、lg 以上: 3 カラム並列表示 */}
       <div className="flex shrink-0 border-b bg-card lg:hidden">
@@ -321,7 +382,10 @@ export function SessionView({
         >
           <Transcript
             messages={msgs}
-            onChoiceClick={readonly ? undefined : handleChoiceClick}
+            selectedChoices={selectedChoices}
+            onToggleChoice={readonly ? undefined : handleToggleChoice}
+            onSubmitChoices={readonly ? undefined : handleSubmitChoices}
+            onOtherClick={readonly ? undefined : handleOtherClick}
             disabled={sending || isFinished}
           />
           {!readonly && error && (
@@ -331,9 +395,13 @@ export function SessionView({
           )}
           {!readonly && (
             <ChatInput
-              onSend={sendMessage}
+              value={chatValue}
+              onChange={setChatValue}
+              onSend={handleChatSend}
               disabled={sending || isFinished}
               textareaRef={chatInputRef}
+              selectedChoices={selectedChoices}
+              onRemoveChoice={handleRemoveChoice}
             />
           )}
         </section>
