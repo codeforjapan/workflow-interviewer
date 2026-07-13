@@ -73,6 +73,17 @@ export type MessageMeta = {
    *  UI が「その他」を自動付加するため、ここには含めない。
    *  user メッセージや choices 不要の assistant メッセージでは空配列。 */
   choices?: string[];
+  /** UX6: この質問が対象にしている標準フローノード (nodeCoverage 由来)。
+   *  対応ノードを特定できない質問 (taskName 等の非ステップ系スロットや、KB 不在) では省略される。 */
+  targetNode?: {
+    kind: "standard";
+    /** StandardNodeRef.id ("block-1/CalcValue") */
+    nodeId: string;
+    /** mermaid ノード生 id (例 "CalcValue")。レンダ済み SVG 内のノード特定に使う */
+    rawId: string;
+    /** 0-based。StandardFlowSummary.mermaidSources のインデックスと一致 */
+    blockIndex: number;
+  };
 };
 
 export const messages = pgTable("messages", {

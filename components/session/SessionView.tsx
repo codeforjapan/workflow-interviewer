@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { InferSelectModel } from "drizzle-orm";
 import { ArrowLeftIcon } from "lucide-react";
@@ -224,6 +224,17 @@ export function SessionView({
     setSelectedChoices((prev) => prev.filter((c) => c !== choice));
   };
 
+  // UX6: 現在の質問（最新の assistant メッセージ）が対象にしている標準フローノード。
+  // 対応ノードを特定できない質問では undefined のままで、ハイライトは表示されない。
+  const activeTargetNode = useMemo(() => {
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i];
+      if (m.role !== "assistant") continue;
+      return m.meta?.targetNode ?? null;
+    }
+    return null;
+  }, [msgs]);
+
   const selectedNodeDetail = (() => {
     if (!selectedNodeId) return null;
     if (selectedNodeId === "task") {
@@ -375,7 +386,7 @@ export function SessionView({
         <section
           className={`min-h-0 border-r ${activeTab === "standard" ? "flex flex-col" : "hidden"} lg:flex lg:flex-col`}
         >
-          <StandardFlowPanel standardFlow={standardFlow} />
+          <StandardFlowPanel standardFlow={standardFlow} activeTargetNode={activeTargetNode} />
         </section>
         <section
           className={`min-h-0 flex-col border-r ${activeTab === "chat" ? "flex" : "hidden"} lg:flex`}

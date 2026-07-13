@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Maximize2Icon,
   MinusIcon,
@@ -13,7 +13,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { MessageMeta } from "@/lib/db/schema";
 import { preprocessMermaidSource } from "./mermaid-preprocess";
+
+/** mermaid が生成するノード DOM id ("...-flowchart-<rawId>-<counter>") を
+ *  特定するためのクラス名。app/globals.css 側でハイライトスタイルを定義する。 */
+const ACTIVE_NODE_CLASS = "ux6-target-node";
+
+/** rawId を含む node id のサフィックスを見つけるための正規表現エスケープ */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 4;
@@ -33,8 +43,11 @@ export type StandardFlowSummary = {
  */
 export function StandardFlowPanel({
   standardFlow,
+  activeTargetNode = null,
 }: {
   standardFlow: StandardFlowSummary | null;
+  /** UX6: 現在の質問が対象にしている標準フローノード。あればそのノードをハイライトする。 */
+  activeTargetNode?: MessageMeta["targetNode"] | null;
 }) {
   if (!standardFlow) {
     return (
@@ -59,7 +72,12 @@ export function StandardFlowPanel({
           </p>
         )}
         {standardFlow.mermaidSources.map((src, i) => (
-          <MermaidBlock key={`${standardFlow.slug}-${i}`} index={i} source={src} />
+          <MermaidBlock
+            key={`${standardFlow.slug}-${i}`}
+            index={i}
+            source={src}
+            activeRawId={activeTargetNode?.blockIndex === i ? activeTargetNode.rawId : null}
+          />
         ))}
       </div>
     </div>
@@ -71,10 +89,21 @@ type BlockState =
   | { status: "ready"; svg: string }
   | { status: "error"; message: string };
 
-function MermaidBlock({ index, source }: { index: number; source: string }) {
+function MermaidBlock({
+  index,
+  source,
+  activeRawId = null,
+}: {
+  index: number;
+  source: string;
+  /** UX6: このブロック内でハイライトすべきノードの mermaid 生 id */
+  activeRawId?: string | null;
+}) {
   const [state, setState] = useState<BlockState>({ status: "loading" });
   const [zoomOpen, setZoomOpen] = useState(false);
   const [scale, setScale] = useState(1);
+  const inlineContainerRef = useRef<HTMLDivElement | null>(null);
+  const dialogContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,6 +132,23 @@ function MermaidBlock({ index, source }: { index: number; source: string }) {
       cancelled = true;
     };
   }, [index, source]);
+
+  // UX6: SVG は dangerouslySetInnerHTML で React 管理外に置かれるため、
+  // ハイライトの付け外しは DOM を直接操作する (React の再レンダには乗らない)。
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    for (const container of [inlineContainerRef.current, dialogContainerRef.current]) {
+      if (!container) continue;
+      for (const el of container.querySelectorAll(`.${ACTIVE_NODE_CLASS}`)) {
+        el.classList.remove(ACTIVE_NODE_CLASS);
+      }
+      if (!activeRawId) continue;
+      const suffixRe = new RegExp(`flowchart-${escapeRegExp(activeRawId)}-\\d+$`);
+      for (const el of container.querySelectorAll("[id]")) {
+        if (suffixRe.test(el.id)) el.classList.add(ACTIVE_NODE_CLASS);
+      }
+    }
+  }, [state, activeRawId, zoomOpen]);
 
   return (
     <section className="mb-4 last:mb-0">
@@ -138,6 +184,7 @@ function MermaidBlock({ index, source }: { index: number; source: string }) {
             拡大
           </span>
           <div
+            ref={inlineContainerRef}
             // mermaid の出力 SVG を React 管理下に置く。
             // 直接 innerHTML で書くと、再レンダ時に removeChild が失敗する。
             dangerouslySetInnerHTML={{ __html: state.svg }}
@@ -184,6 +231,7 @@ function MermaidBlock({ index, source }: { index: number; source: string }) {
             </div>
             <div className="min-h-0 flex-1 overflow-auto rounded border bg-white p-4 dark:bg-zinc-900">
               <div
+                ref={dialogContainerRef}
                 style={{ transform: `scale(${scale})`, transformOrigin: "top left" }}
                 className="inline-block"
                 dangerouslySetInnerHTML={{ __html: state.svg }}

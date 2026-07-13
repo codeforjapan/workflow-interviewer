@@ -1,7 +1,7 @@
 import { eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
-import { messages, sessions } from "@/lib/db/schema";
+import { messages, sessions, type MessageMeta } from "@/lib/db/schema";
 import { recomputeGaps, shouldRecomputeGaps } from "@/lib/server/gap/recompute";
 import { detectCautionFlagsForExtracted } from "./cautions";
 import { extractBusinessInfo } from "./extract";
@@ -132,6 +132,9 @@ export async function handleUserTurn(params: {
 
   let nextContent: string;
   let nextChoices: string[] = [];
+  // UX6: 質問がどの標準フローノードを対象にしているか。特定できる質問 ("steps" スロットで
+  // 未確認の本筋ノードを名指しする場合) のみ設定し、フロー図側のハイライトに使う。
+  let targetNode: MessageMeta["targetNode"];
   if (shouldClose) {
     nextContent = questions.closing;
   } else {
@@ -150,6 +153,12 @@ export async function handleUserTurn(params: {
       } else if (slot === "steps" && nodeCoverage?.nextUnconfirmed) {
         // UX1: 未確認の本筋ノードがあれば、それを具体的に指す質問に差し替える。
         guideQuestion = formatNodeCoverageAsGuide(nodeCoverage.nextUnconfirmed);
+        targetNode = {
+          kind: "standard",
+          nodeId: nodeCoverage.nextUnconfirmed.nodeId,
+          rawId: nodeCoverage.nextUnconfirmed.rawId,
+          blockIndex: nodeCoverage.nextUnconfirmed.blockIndex,
+        };
       }
       const followup = await generateAdaptiveQuestion({
         sessionId,
@@ -173,7 +182,7 @@ export async function handleUserTurn(params: {
     sessionId,
     role: "assistant",
     content: nextContent,
-    meta: { choices: nextChoices },
+    meta: { choices: nextChoices, ...(targetNode ? { targetNode } : {}) },
   });
 
   // 4. session 更新。currentQuestionIndex は常に実ターン数 (MAX_TURNS で頭打ち)。
