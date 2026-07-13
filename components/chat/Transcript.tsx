@@ -12,6 +12,7 @@ const OTHER_LABEL = "その他";
 
 export function Transcript({
   messages,
+  streamingContent,
   selectedChoices = [],
   onToggleChoice,
   onSubmitChoices,
@@ -19,6 +20,8 @@ export function Transcript({
   disabled,
 }: {
   messages: Message[];
+  /** 追い質問本文のストリーミング途中経過。null/undefined = 非表示、"" = 応答待ち中（本文未着手）。 */
+  streamingContent?: string | null;
   /** 現在トグル選択中の選択肢一覧（複数選択可） */
   selectedChoices?: string[];
   /** 選択肢ボタンが押されたときのコールバック。選択状態をトグルするのみで即送信はしない。 */
@@ -31,10 +34,11 @@ export function Transcript({
   disabled?: boolean;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
+  const isStreaming = streamingContent !== null && streamingContent !== undefined;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [messages.length, streamingContent]);
 
   // 最後の assistant メッセージのみで choices を有効化する。
   // 職員が次の発話 (user message) を返したら既に応答済みなので非表示。
@@ -117,6 +121,24 @@ export function Transcript({
             </div>
           );
         })}
+        {isStreaming && (
+          <div className="flex flex-col items-start gap-2">
+            <div className="max-w-[85%] rounded-lg bg-zinc-100 px-3 py-2 text-sm text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
+              {streamingContent ? (
+                <span className="whitespace-pre-wrap">
+                  {streamingContent}
+                  <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-zinc-500 align-text-bottom dark:bg-zinc-400" />
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 py-0.5">
+                  <span className="size-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.3s] dark:bg-zinc-500" />
+                  <span className="size-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.15s] dark:bg-zinc-500" />
+                  <span className="size-1.5 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" />
+                </span>
+              )}
+            </div>
+          </div>
+        )}
         <div ref={endRef} />
       </div>
     </ScrollArea>
