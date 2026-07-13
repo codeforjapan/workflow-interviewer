@@ -6,17 +6,14 @@ import { recomputeGaps, shouldRecomputeGaps } from "@/lib/server/gap/recompute";
 import { detectCautionFlagsForExtracted } from "./cautions";
 import { extractBusinessInfo } from "./extract";
 import { generateAdaptiveQuestion } from "./followup";
+import {
+  computeNodeCoverage,
+  formatNodeCoverageAsGuide,
+  shouldBoostIncidents,
+} from "./nodeCoverage";
 import { questions } from "./questions";
 import { formatRiskCueAsGuide, loadRiskCues } from "./risks";
-import {
-  chooseNextSlot,
-  getSlotTemplate,
-  isFinished,
-  isMinimumFilled,
-  MAX_TURNS,
-  SLOT_DEFS,
-  type SlotBoosts,
-} from "./slots";
+import { chooseNextSlot, getSlotTemplate, isFinished, MAX_TURNS, SLOT_DEFS, type SlotBoosts } from "./slots";
 
 const INCIDENTS_RISK_BOOST = 50;
 
@@ -93,19 +90,26 @@ export async function handleUserTurn(params: {
   };
 
   // 3. スロット駆動で次の発話を決定
+  // UX1: 標準フロー本筋ノードの被覆状況 (LLM 非依存、毎ターン軽量に計算)
+  const nodeCoverage = await computeNodeCoverage(session.taskSlug, updatedExtracted.steps);
+
   const reachedMax = nextTurnCount >= MAX_TURNS;
-  const finished = isFinished(updatedExtracted, nextTurnCount);
+  const finished = isFinished(updatedExtracted, nextTurnCount, nodeCoverage);
   const shouldClose = reachedMax || finished;
 
   // B3: 業務 KB の creates_risks → INC-*.md 由来の cue を読み、
-  // tier-1 が充足 & incidents が空のときに incidents スロットを強くブースト。
+  // tier-1 が充足 & incidents が空 & 本筋ノード被覆が MAIN_FLOW_COVERAGE_GATE 以上のときに
+  // incidents スロットを強くブースト (UX1: 本筋が薄いうちは枝葉の深掘りを抑える)。
   const riskCues = await loadRiskCues(session.taskSlug ?? "");
   const boosts: SlotBoosts = {};
   const incidentsEmpty = updatedExtracted.incidents.length === 0;
   if (
-    riskCues.length > 0 &&
-    incidentsEmpty &&
-    isMinimumFilled(updatedExtracted)
+    shouldBoostIncidents({
+      riskCuesCount: riskCues.length,
+      incidentsEmpty,
+      extracted: updatedExtracted,
+      nodeCoverage,
+    })
   ) {
     boosts.incidents = INCIDENTS_RISK_BOOST;
   }
@@ -115,7 +119,7 @@ export async function handleUserTurn(params: {
   if (shouldClose) {
     nextContent = questions.closing;
   } else {
-    const slot = chooseNextSlot(updatedExtracted, userInput, boosts);
+    const slot = chooseNextSlot(updatedExtracted, userInput, boosts, nodeCoverage);
     if (!slot) {
       nextContent = questions.closing;
     } else {
@@ -126,6 +130,9 @@ export async function handleUserTurn(params: {
       if (slot === "incidents" && riskCues.length > 0) {
         const cue = riskCues[nextTurnCount % riskCues.length];
         guideQuestion = formatRiskCueAsGuide(cue);
+      } else if (slot === "steps" && nodeCoverage?.nextUnconfirmed) {
+        // UX1: 未確認の本筋ノードがあれば、それを具体的に指す質問に差し替える。
+        guideQuestion = formatNodeCoverageAsGuide(nodeCoverage.nextUnconfirmed);
       }
       const followup = await generateAdaptiveQuestion({
         sessionId,
@@ -137,6 +144,7 @@ export async function handleUserTurn(params: {
           .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
         extracted: updatedExtracted,
         taskSlug: session.taskSlug,
+        nodeCoverage,
       });
       nextContent = followup.content;
       nextChoices = followup.choices;

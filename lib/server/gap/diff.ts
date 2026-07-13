@@ -1,11 +1,7 @@
 import { z } from "zod";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { loadWorkflowBySlug } from "@/lib/kb/loader";
-import type {
-  MermaidGraph,
-  MermaidNode,
-  ParsedFlowStandard,
-} from "@/lib/kb/types";
+import { flattenStandardNodes, type StandardNodeRef } from "@/lib/kb/standardNodes";
 import { MODELS, openai } from "@/lib/server/openai";
 import type {
   ExtractedGap,
@@ -14,7 +10,6 @@ import type {
 
 const MIN_STEPS_TO_DIFF = 3;
 const REASON_MAX = 240;
-const LABEL_NEWLINE = /\\n|\n/g;
 
 const FindingKindSchema = z.enum(["add", "missing", "order", "local-rule"]);
 
@@ -29,48 +24,16 @@ const DiffResponseSchema = z.object({
   ),
 });
 
-export type StandardNodeRef = {
-  /** "block-2/CheckProxy" のような mermaid ブロックを含むユニークキー */
-  id: string;
-  /** mermaid ノード id (例: "CheckProxy") */
-  rawId: string;
-  label: string;
-  subgraph: string | null;
-  blockIndex: number;
-};
+// StandardNodeRef / flattenStandardNodes は lib/kb/standardNodes.ts に移設済み。
+// nodeCoverage.ts (毎ターン軽量実行、LLM 非依存) がこのファイル経由で
+// openai モジュールを引き込まないようにするための切り出し。ここでは re-export のみ行う。
+export { flattenStandardNodes };
+export type { StandardNodeRef };
 
 export type DiffInput = {
   slug: string;
   extracted: SessionExtractedData;
 };
-
-/**
- * 標準フロー (複数 mermaid ブロック) の全ノードをフラット化する。
- * 同名ノードが異なるブロックに出てきても別エントリとして扱う (block-N プレフィックス)。
- */
-export function flattenStandardNodes(
-  flowStandard: ParsedFlowStandard,
-): StandardNodeRef[] {
-  const out: StandardNodeRef[] = [];
-  flowStandard.mermaid.forEach((graph: MermaidGraph, blockIndex: number) => {
-    const subgraphByNode = new Map<string, string>();
-    for (const sg of graph.subgraphs) {
-      for (const nid of sg.nodeIds) subgraphByNode.set(nid, sg.title);
-    }
-    for (const node of graph.nodes) {
-      // ノードラベルの \n を空白に潰す (LLM に渡しやすくする)
-      const cleanLabel = (node.label || node.id).replace(LABEL_NEWLINE, " ").trim();
-      out.push({
-        id: `block-${blockIndex + 1}/${node.id}`,
-        rawId: node.id,
-        label: cleanLabel,
-        subgraph: subgraphByNode.get(node.id) ?? null,
-        blockIndex,
-      });
-    }
-  });
-  return out;
-}
 
 function clip(text: string, max: number): string {
   if (text.length <= max) return text;
