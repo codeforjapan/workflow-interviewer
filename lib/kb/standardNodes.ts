@@ -1,4 +1,4 @@
-import type { MermaidGraph, MermaidNode, ParsedFlowStandard } from "./types";
+import type { FlowStandardMermaidBlock, MermaidNode, ParsedFlowStandard } from "./types";
 
 const LABEL_NEWLINE = /\\n|\n/g;
 
@@ -11,6 +11,8 @@ export type StandardNodeRef = {
   subgraph: string | null;
   blockIndex: number;
   shape: MermaidNode["shape"];
+  /** このノードが属する標準フロー (直前の `## ` 見出し)。無ければ null。 */
+  flowTitle: string | null;
 };
 
 /**
@@ -21,7 +23,7 @@ export function flattenStandardNodes(
   flowStandard: ParsedFlowStandard,
 ): StandardNodeRef[] {
   const out: StandardNodeRef[] = [];
-  flowStandard.mermaid.forEach((graph: MermaidGraph, blockIndex: number) => {
+  flowStandard.mermaid.forEach((graph: FlowStandardMermaidBlock, blockIndex: number) => {
     const subgraphByNode = new Map<string, string>();
     for (const sg of graph.subgraphs) {
       for (const nid of sg.nodeIds) subgraphByNode.set(nid, sg.title);
@@ -36,6 +38,7 @@ export function flattenStandardNodes(
         subgraph: subgraphByNode.get(node.id) ?? null,
         blockIndex,
         shape: node.shape,
+        flowTitle: graph.flowTitle,
       });
     }
   });

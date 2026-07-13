@@ -83,9 +83,19 @@ export const GapSchema = z.object({
 
 export type Gap = z.infer<typeof GapSchema>;
 
+export const FlowStandardMermaidBlockSchema = MermaidGraphSchema.extend({
+  /** この mermaid ブロックの直前にある `## ` 見出し文字列（無ければ null）。
+   *  C2 (diffStandardVsExtracted) が「このノード群はどの標準フロー
+   *  （年度課税台帳整備／評価替え／新築増改築 等）に属するか」を
+   *  LLM に伝えるために使う。 */
+  flowTitle: z.string().nullable(),
+});
+
+export type FlowStandardMermaidBlock = z.infer<typeof FlowStandardMermaidBlockSchema>;
+
 export const ParsedFlowStandardSchema = z.object({
   frontmatter: FlowStandardFrontmatterSchema,
-  mermaid: z.array(MermaidGraphSchema),
+  mermaid: z.array(FlowStandardMermaidBlockSchema),
   raw: z.string(),
 });
 

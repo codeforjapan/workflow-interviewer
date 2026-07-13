@@ -175,15 +175,18 @@ export const MAIN_FLOW_COVERAGE_GATE = 0.8;
  * incidents スロットへのリスクブースト発火条件。
  * controller.ts (db/openai に依存し env 必須) ではなくここに置くことで、
  * DB モックや OPENAI_API_KEY 無しで検証スクリプトから直接テストできる。
+ *
+ * cuesCount は risks.ts の RiskCue と gapCues.ts の GapCue を合算した件数
+ * (UX2: どちらも「incidents スロットを埋めるための狙い撃ち質問素材」として同列に扱う)。
  */
 export function shouldBoostIncidents(params: {
-  riskCuesCount: number;
+  cuesCount: number;
   incidentsEmpty: boolean;
   extracted: SessionExtractedData;
   nodeCoverage: NodeCoverageResult | null;
 }): boolean {
-  const { riskCuesCount, incidentsEmpty, extracted, nodeCoverage } = params;
-  if (riskCuesCount === 0 || !incidentsEmpty) return false;
+  const { cuesCount, incidentsEmpty, extracted, nodeCoverage } = params;
+  if (cuesCount === 0 || !incidentsEmpty) return false;
   if (!isMinimumFilled(extracted, nodeCoverage)) return false;
   // nodeCoverage が計算不能 (KB無し等) のときはゲート自体を無効化し、既存挙動を維持する
   return !nodeCoverage || nodeCoverage.coverageRatio >= MAIN_FLOW_COVERAGE_GATE;

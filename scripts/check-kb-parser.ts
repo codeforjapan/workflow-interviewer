@@ -104,6 +104,28 @@ async function main() {
     `      sections: ${g1.sections.map((s) => s.kind).join(", ")} (${g1.sections.length} sections)`,
   );
 
+  // UX2 (issue #36): gap-notes.md 境界バグの回帰チェック。
+  // kotei-shisan-zei は最後のギャップ見出しの後に無関係な汎用セクション
+  // (「## 標準仕様書が定めておらず...」「## 差分の構造的な意味」) が続く構造で、
+  // 修正前は gap4 の rationale にこれらが丸ごと混入していた。
+  console.log("KB Parser boundary regression — slug: kotei-shisan-zei");
+  {
+    const { gapNotes } = await loadWorkflowBySlug("kotei-shisan-zei");
+    assert(gapNotes.gaps.length === 4, `expected 4 gaps, got ${gapNotes.gaps.length}`);
+    const last = gapNotes.gaps[gapNotes.gaps.length - 1];
+    const rationale = last.sections.find((s) => s.kind === "rationale");
+    assert(rationale != null, "gap4 should have a rationale section");
+    assert(
+      !rationale!.body.includes("標準仕様書が定めておらず"),
+      "gap4 rationale should NOT leak the trailing H2 section (boundary bug regression)",
+    );
+    assert(
+      !rationale!.body.includes("差分の構造的な意味"),
+      "gap4 rationale should NOT leak the trailing ascii diagram section",
+    );
+    console.log(`  kotei-shisan-zei gap4 rationale boundary ✓ (length=${rationale!.body.length})`);
+  }
+
   console.log("PASS");
 }
 
