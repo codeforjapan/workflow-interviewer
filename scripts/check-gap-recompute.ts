@@ -70,7 +70,7 @@ async function main() {
           matchCalls += 1;
           return cands.map((c) => ({
             gap_index: c.index,
-            matched: c.index === 1,
+            status: c.index === 1 ? ("matched" as const) : ("not_matched" as const),
             reason: c.index === 1 ? "ばらつき発話と一致" : null,
           }));
         },
@@ -81,6 +81,7 @@ async function main() {
               kind: "missing",
               standard_node_id: "block-2/SendInquiry",
               extracted_step_id: null,
+              severity: null,
               reason: "照会書送付の言及なし",
             },
           ];
@@ -130,7 +131,7 @@ async function main() {
           // 残候補 (index=2..4) を受け取るはず
           return cands.map((c) => ({
             gap_index: c.index,
-            matched: false,
+            status: "not_matched" as const,
             reason: null,
           }));
         },

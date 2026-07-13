@@ -6,6 +6,7 @@ import { recomputeGaps, shouldRecomputeGaps } from "@/lib/server/gap/recompute";
 import { detectCautionFlagsForExtracted } from "./cautions";
 import { extractBusinessInfo } from "./extract";
 import { generateAdaptiveQuestion } from "./followup";
+import { formatGapCueAsGuide, loadGapCues, pickUnmatchedGapCues } from "./gapCues";
 import {
   computeNodeCoverage,
   formatNodeCoverageAsGuide,
@@ -99,16 +100,29 @@ export async function handleUserTurn(params: {
   const finished = isFinished(updatedExtracted, nextTurnCount, nodeCoverage);
   const shouldClose = reachedMax || finished;
 
-  // B3: 業務 KB の creates_risks → INC-*.md 由来の cue を読み、
-  // tier-1 が充足 & incidents が空 & 本筋ノード被覆が MAIN_FLOW_COVERAGE_GATE 以上のときに
-  // incidents スロットを強くブースト (UX1: 本筋が薄いうちは枝葉の深掘りを抑える)。
-  const riskCues = await loadRiskCues(session.taskSlug ?? "");
+  // B3/UX2: 業務 KB の creates_risks → INC-*.md 由来の cue と、gap-notes.md の reality
+  // 記述由来の cue (UX2 新規) を読み、tier-1 が充足 & incidents が空 & 本筋ノード被覆が
+  // MAIN_FLOW_COVERAGE_GATE 以上のときに incidents スロットを強くブースト
+  // (UX1: 本筋が薄いうちは枝葉の深掘りを抑える)。
+  const [riskCues, gapCuesAll] = await Promise.all([
+    loadRiskCues(session.taskSlug ?? ""),
+    loadGapCues(session.taskSlug ?? ""),
+  ]);
+  const gapCues = pickUnmatchedGapCues(gapCuesAll, updatedExtracted.gaps);
+  const combinedCues: Array<
+    | { kind: "gap"; cue: (typeof gapCues)[number] }
+    | { kind: "risk"; cue: (typeof riskCues)[number] }
+  > = [
+    ...gapCues.map((cue) => ({ kind: "gap" as const, cue })),
+    ...riskCues.map((cue) => ({ kind: "risk" as const, cue })),
+  ];
   const boosts: SlotBoosts = {};
   const incidentsEmpty = updatedExtracted.incidents.length === 0;
   if (
     shouldBoostIncidents({
-      riskCuesCount: riskCues.length,
-      incidentsEmpty,
+      // 未消化の gapCues が残っている限り再アームする (riskCues は従来通り1回きり)。
+      cuesCount: combinedCues.length,
+      incidentsEmpty: incidentsEmpty || gapCues.length > 0,
       extracted: updatedExtracted,
       nodeCoverage,
     })
@@ -125,13 +139,14 @@ export async function handleUserTurn(params: {
     if (!slot) {
       nextContent = questions.closing;
     } else {
-      // incidents スロットが選ばれ、かつ riskCues があれば、
-      // テンプレを「もし X が起きたら何が起きるか」型に差し替える。
+      // incidents スロットが選ばれ、かつ combinedCues (risk cue / gap cue) があれば、
+      // テンプレを「もし X が起きたら」型 or「他自治体ではこう」型に差し替える。
       // ターン毎に cue をローテーションして同じ問いを連投しない。
       let guideQuestion = getSlotTemplate(slot, session.taskSlug);
-      if (slot === "incidents" && riskCues.length > 0) {
-        const cue = riskCues[nextTurnCount % riskCues.length];
-        guideQuestion = formatRiskCueAsGuide(cue);
+      if (slot === "incidents" && combinedCues.length > 0) {
+        const picked = combinedCues[nextTurnCount % combinedCues.length];
+        guideQuestion =
+          picked.kind === "gap" ? formatGapCueAsGuide(picked.cue) : formatRiskCueAsGuide(picked.cue);
       } else if (slot === "steps" && nodeCoverage?.nextUnconfirmed) {
         // UX1: 未確認の本筋ノードがあれば、それを具体的に指す質問に差し替える。
         guideQuestion = formatNodeCoverageAsGuide(nodeCoverage.nextUnconfirmed);

@@ -15,6 +15,7 @@
     "check:progress": "tsx scripts/check-progress.ts",
     "check:kb-seed": "tsx scripts/check-kb-seed.ts",
     "check:risks": "tsx scripts/check-risks.ts",
+    "check:gap-cues": "tsx scripts/check-gap-cues.ts",
     "check:cautions": "tsx scripts/check-cautions.ts",
     "check:gap-match": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-match.ts",
     "check:gap-diff": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-diff.ts",
