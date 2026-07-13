@@ -1,12 +1,16 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
+import { streamSSE, type SSEMessage } from "hono/streaming";
 import { desc, eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { sessions, messages } from "@/lib/db/schema";
 import { detectCautionFlagsForExtracted } from "@/lib/server/interview/cautions";
-import { handleUserTurn } from "@/lib/server/interview/controller";
+import {
+  handleUserTurnStreaming,
+  recomputeDeferredGaps,
+} from "@/lib/server/interview/controller";
 import { buildJsonReport } from "@/lib/server/export/json";
 import { buildMarkdownReport } from "@/lib/server/export/markdown";
 import { recomputeGaps } from "@/lib/server/gap/recompute";
@@ -164,19 +168,60 @@ export const sessionsRoute = new Hono()
   /**
    * POST /api/sessions/:id/messages
    * ユーザー発話を 1 ターン進める。
+   * UX5: 追い質問本文をトークン単位で SSE ストリーミングする。
+   * イベント種別: delta (本文の途中経過) → message (確定メッセージ + session) →
+   * (3ターン毎のみ) session (ギャップ再計算後の最新 session) → エラー時は error。
+   * リクエストバリデーション自体（400）はここに到達する前に zValidator が非SSEで返す。
    */
   .post("/:id/messages", zValidator("json", messageInputSchema), async (c) => {
     const id = c.req.param("id");
     const { content } = c.req.valid("json");
-    try {
-      const result = await handleUserTurn({ sessionId: id, userInput: content });
-      return c.json(result);
-    } catch (err) {
-      console.error("[POST /sessions/:id/messages] failed", err);
-      const message = err instanceof Error ? err.message : "unknown error";
-      const cause = err instanceof Error && err.cause ? String(err.cause) : undefined;
-      return c.json({ error: message, cause }, 500);
-    }
+
+    return streamSSE(
+      c,
+      async (stream) => {
+        // OpenAI のストリームイベントは同期的に発火するが writeSSE は非同期なので、
+        // 呼び出し順に書き込みが完了するよう直列化するキューを挟む。
+        let writeQueue: Promise<unknown> = Promise.resolve();
+        const enqueue = (message: SSEMessage) => {
+          writeQueue = writeQueue.then(() => stream.writeSSE(message));
+          return writeQueue;
+        };
+
+        const result = await handleUserTurnStreaming({
+          sessionId: id,
+          userInput: content,
+          onQuestionDelta: (contentSoFar) => {
+            enqueue({ event: "delta", data: JSON.stringify({ text: contentSoFar }) });
+          },
+        });
+
+        // message イベント送出前に currentQuestionIndex / extractedData（gaps据え置き）/
+        // cautionFlags の DB 書き込みは handleUserTurnStreaming 内で完了済み。
+        // クライアントはこのイベントを受けて次ターンの送信を再開してよい。
+        await enqueue({
+          event: "message",
+          data: JSON.stringify({
+            message: result.message,
+            session: result.session,
+            progress: result.progress,
+          }),
+        });
+
+        if (result.needsGapRecompute && result.gapRecomputeContext) {
+          const updatedSession = await recomputeDeferredGaps(result.gapRecomputeContext);
+          if (updatedSession) {
+            await enqueue({
+              event: "session",
+              data: JSON.stringify({ session: updatedSession }),
+            });
+          }
+        }
+      },
+      async (err) => {
+        console.error("[POST /sessions/:id/messages] failed", err);
+      },
+    );
   })
   /**
    * GET /api/sessions/:id/export?format=md|json

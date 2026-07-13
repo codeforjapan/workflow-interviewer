@@ -42,6 +42,8 @@ export function SessionView({
   const [msgs, setMsgs] = useState(initialMessages);
   const [progress, setProgress] = useState(initialProgress);
   const [sending, setSending] = useState(false);
+  // 追い質問本文のストリーミング途中経過。null = 非表示、"" = 応答待ち中（本文未着手）。
+  const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [flowSaveState, setFlowSaveState] = useState<"idle" | "saving" | "error">("idle");
   const [gapRecomputeState, setGapRecomputeState] = useState<"idle" | "running" | "error">(
     "idle",
@@ -157,31 +159,113 @@ export function SessionView({
     };
   }, []);
 
+  // SSE の 1 イベント分 ("event: ...\ndata: ...\n\n") を event 名と生 data 文字列に分解する。
+  const parseSseFrame = (rawEvent: string): { event: string; rawData: string } | null => {
+    let event = "message";
+    const dataLines: string[] = [];
+    for (const line of rawEvent.split("\n")) {
+      if (line.startsWith("event:")) event = line.slice("event:".length).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice("data:".length).replace(/^ /, ""));
+    }
+    if (dataLines.length === 0) return null;
+    return { event, rawData: dataLines.join("\n") };
+  };
+
   const sendMessage = async (content: string) => {
     setSending(true);
     setError(null);
+    setStreamingContent("");
+    // 往復完了を待たずにユーザー自身の発言を先に表示する（体感速度向上）。
+    // サーバーからは新規 assistant メッセージのみが返るため、この楽観的な user メッセージは
+    // そのまま残し続けてよい（内容はサーバーへ送った content と完全一致する）。
+    const optimisticId = `optimistic-${crypto.randomUUID()}`;
+    setMsgs((prev) => [
+      ...prev,
+      {
+        id: optimisticId,
+        sessionId: session.id,
+        role: "user",
+        content,
+        meta: {},
+        createdAt: new Date(),
+      },
+    ]);
     try {
       const res = await fetch(`/api/sessions/${session.id}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ content }),
       });
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         const body = await res.text();
         console.error("message POST failed", res.status, body);
         throw new Error(`${res.status}: ${body.slice(0, 300)}`);
       }
-      const data = (await res.json()) as {
-        session: Session;
-        messages: Message[];
-        progress: InterviewProgress;
-      };
-      setSession(data.session);
-      setMsgs(data.messages);
-      setProgress(data.progress);
-      setSelectedChoices([]);
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("text/event-stream")) {
+        // 想定外のケース（本来は zValidator の 400 などここに到達する前に弾かれる）は
+        // 従来通り JSON 一括レスポンスとして処理するフォールバック。
+        const data = (await res.json()) as {
+          session: Session;
+          messages: Message[];
+          progress: InterviewProgress;
+        };
+        setSession(data.session);
+        setMsgs(data.messages);
+        setProgress(data.progress);
+        setSelectedChoices([]);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let sawMessageEvent = false;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        // stream: true を付けないと日本語などマルチバイト文字が chunk 境界で分割され文字化けする。
+        buffer += decoder.decode(value, { stream: true });
+        let sepIndex: number;
+        while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+          const frame = parseSseFrame(buffer.slice(0, sepIndex));
+          buffer = buffer.slice(sepIndex + 2);
+          if (!frame) continue;
+
+          if (frame.event === "error") {
+            // hono streamSSE の onError は data に生の Error#message を渡す（JSON化しない）。
+            setError(frame.rawData || "unknown error");
+            continue;
+          }
+          const data = JSON.parse(frame.rawData) as {
+            text?: string;
+            message?: Message;
+            session?: Session;
+            progress?: InterviewProgress;
+          };
+          if (frame.event === "delta" && typeof data.text === "string") {
+            setStreamingContent(data.text);
+          } else if (frame.event === "message" && data.message && data.session) {
+            sawMessageEvent = true;
+            setMsgs((prev) => [...prev, data.message as Message]);
+            setSession(data.session);
+            if (data.progress) setProgress(data.progress);
+            setStreamingContent(null);
+            setSelectedChoices([]);
+            setSending(false);
+          } else if (frame.event === "session" && data.session) {
+            setSession(data.session);
+          }
+        }
+      }
+      if (!sawMessageEvent) {
+        // message イベントを一度も受け取れなかった（＝ error イベントのみ、または接続が途切れた）
+        throw new Error("応答の取得に失敗しました");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "unknown error");
+      setMsgs((prev) => prev.filter((m) => m.id !== optimisticId));
+      setStreamingContent(null);
     } finally {
       setSending(false);
     }
@@ -393,6 +477,7 @@ export function SessionView({
         >
           <Transcript
             messages={msgs}
+            streamingContent={readonly ? null : streamingContent}
             selectedChoices={selectedChoices}
             onToggleChoice={readonly ? undefined : handleToggleChoice}
             onSubmitChoices={readonly ? undefined : handleSubmitChoices}

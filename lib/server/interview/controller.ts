@@ -1,37 +1,61 @@
 import { eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
-import { messages, sessions, type MessageMeta } from "@/lib/db/schema";
+import { messages, sessions, type MessageMeta, type SessionExtractedData } from "@/lib/db/schema";
+import type { ExtractedBusinessInfo } from "@/lib/server/interview/schema";
 import { recomputeGaps, shouldRecomputeGaps } from "@/lib/server/gap/recompute";
 import { detectCautionFlagsForExtracted } from "./cautions";
 import { extractBusinessInfo } from "./extract";
-import { generateAdaptiveQuestion } from "./followup";
+import { streamAdaptiveQuestion } from "./followup";
 import { formatGapCueAsGuide, loadGapCues, pickUnmatchedGapCues } from "./gapCues";
 import {
   computeNodeCoverage,
   formatNodeCoverageAsGuide,
   shouldBoostIncidents,
 } from "./nodeCoverage";
-import { buildInterviewProgress } from "./progress";
+import { buildInterviewProgress, type InterviewProgress } from "./progress";
 import { questions } from "./questions";
 import { formatRiskCueAsGuide, loadRiskCues } from "./risks";
 import { chooseNextSlot, getSlotTemplate, isFinished, MAX_TURNS, SLOT_DEFS, type SlotBoosts } from "./slots";
 
 const INCIDENTS_RISK_BOOST = 50;
 
+type ConversationMessage = { role: "user" | "assistant"; content: string };
+
+export type HandleUserTurnStreamingResult = {
+  message: typeof messages.$inferSelect;
+  session: typeof sessions.$inferSelect;
+  progress: InterviewProgress;
+  /** true の場合、message 送出後に recomputeDeferredGaps を呼んでギャップ再計算を反映させる */
+  needsGapRecompute: boolean;
+  gapRecomputeContext?: DeferredGapContext;
+};
+
+type DeferredGapContext = {
+  sessionId: string;
+  slug: string;
+  llmExtracted: ExtractedBusinessInfo;
+  conversationForLlm: ConversationMessage[];
+};
+
 /**
- * ユーザー発話を受けて 1 ターン進める。
+ * ユーザー発話を受けて 1 ターン進める（ストリーミング版）。
  * 1. user メッセージ保存
- * 2. 構造化抽出を実行して extractedData を更新
- * 3. スロット駆動で次の質問 (or クロージング) を決定し assistant メッセージとして保存
- * 4. session.currentQuestionIndex を実ターン数として更新 (MAX_TURNS で頭打ち。絶対上限のみを意味する)
+ * 2. 構造化抽出を実行して extractedData を更新（gaps は前回値を維持したまま = クリティカルパスから外す）
+ * 3. スロット駆動で次の質問 (or クロージング) を決定。追い質問本文は onQuestionDelta でトークン単位に流す
+ * 4. assistant メッセージ保存 + session 更新（currentQuestionIndex, gaps 以外の extractedData, cautionFlags）
+ *    をここまでで DB に確定させてから戻り値を返す（呼び出し側はこの時点で次ターンを受け付けてよい）
  * 5. progress (完了可否 + 必須スロット充足 + 本筋ノード被覆) を組み立てて返す
+ *
+ * 3 ターン毎のギャップ再計算 (recomputeGaps) はここでは行わず、needsGapRecompute=true のときだけ
+ * 呼び出し側が recomputeDeferredGaps を後続で呼ぶ（応答表示のクリティカルパスから外すため）。
  */
-export async function handleUserTurn(params: {
+export async function handleUserTurnStreaming(params: {
   sessionId: string;
   userInput: string;
-}) {
-  const { sessionId, userInput } = params;
+  onQuestionDelta: (contentSoFar: string) => void;
+}): Promise<HandleUserTurnStreamingResult> {
+  const { sessionId, userInput, onQuestionDelta } = params;
 
   const session = await db.query.sessions.findFirst({
     where: eq(sessions.id, sessionId),
@@ -52,41 +76,34 @@ export async function handleUserTurn(params: {
     where: eq(messages.sessionId, sessionId),
     orderBy: asc(messages.createdAt),
   });
+  const conversationForLlm: ConversationMessage[] = conversation
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
   const llmExtracted = await extractBusinessInfo({
-    conversation: conversation
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+    conversation: conversationForLlm,
     current: session.extractedData,
   });
   // LLM は connections / exceptions / incidents まで抽出する (B2)。
   // gaps は C1 (既知ギャップ照合) で埋める。matchedKnownGap 付きで蓄積。
   // cautionFlags は B4 の後処理で常に再計算する。
-  const conversationForLlm = conversation
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
-  // C3: ギャップ計算 (C1+C2) は 3 ターン毎に絞る。それ以外のターンでは
-  //     セッション既存の gaps をそのまま維持する。明示再計算は
-  //     POST /api/sessions/:id/gap-recompute から呼ばれる。
+  //
+  // C3: ギャップ計算 (C1+C2) は 3 ターン毎に絞られる。UX5 でこれを応答表示の
+  //     クリティカルパスから外したため、このターンでは常にセッション既存の
+  //     gaps をそのまま維持し（＝ 3 ターン毎のターンでも追い質問プロンプトが
+  //     見る gaps は 1 ターン分古い、という意図的な仕様変更）、
+  //     needsGapRecompute=true の場合のみ呼び出し側が recomputeDeferredGaps を
+  //     message 送出後に呼んで反映する。明示再計算は従来通り
+  //     POST /api/sessions/:id/gap-recompute からも呼べる。
   const nextTurnCount = session.currentQuestionIndex + 1;
   const refreshGaps = shouldRecomputeGaps(nextTurnCount);
-  const gaps = refreshGaps
-    ? await recomputeGaps({
-        slug: session.taskSlug ?? "",
-        extracted: {
-          ...llmExtracted,
-          gaps: session.extractedData.gaps,
-          cautionFlags: [],
-        },
-        conversation: conversationForLlm,
-      })
-    : session.extractedData.gaps;
+  const gaps = session.extractedData.gaps;
   // cautionFlags は label を毎ターンスキャンするだけの軽い処理なので毎ターン更新する。
   const cautionFlags = await detectCautionFlagsForExtracted({
     ...llmExtracted,
     gaps,
     cautionFlags: [],
   });
-  const updatedExtracted = {
+  const updatedExtracted: SessionExtractedData = {
     ...llmExtracted,
     gaps,
     cautionFlags,
@@ -160,35 +177,39 @@ export async function handleUserTurn(params: {
           blockIndex: nodeCoverage.nextUnconfirmed.blockIndex,
         };
       }
-      const followup = await generateAdaptiveQuestion({
+      const followup = await streamAdaptiveQuestion({
         sessionId,
         sessionStatus: session.status,
         guideQuestion,
         questionIndex: nextTurnCount,
-        conversation: conversation
-          .filter((m) => m.role === "user" || m.role === "assistant")
-          .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+        conversation: conversationForLlm,
         extracted: updatedExtracted,
         taskSlug: session.taskSlug,
         nodeCoverage,
+        onDelta: onQuestionDelta,
       });
       nextContent = followup.content;
       nextChoices = followup.choices;
     }
   }
 
-  await db.insert(messages).values({
-    id: nanoid(12),
-    sessionId,
-    role: "assistant",
-    content: nextContent,
-    meta: { choices: nextChoices, ...(targetNode ? { targetNode } : {}) },
-  });
+  const [assistantMessage] = await db
+    .insert(messages)
+    .values({
+      id: nanoid(12),
+      sessionId,
+      role: "assistant",
+      content: nextContent,
+      meta: { choices: nextChoices, ...(targetNode ? { targetNode } : {}) },
+    })
+    .returning();
 
   // 4. session 更新。currentQuestionIndex は常に実ターン数 (MAX_TURNS で頭打ち)。
   //    UX3: 以前はクロージング時に MAX_TURNS へ強制ジャンプさせ、これを完了ボタンの
   //    活性シグナルとして使っていたが、早期終了セッションが「ターン20/20」と誤表示される
   //    原因になっていたため廃止した。完了可否は progress.readyToFinish で判定する。
+  // ここまでを DB に確定させてから戻り値を返すことで、呼び出し側が「メッセージ確定 = 次ターン受付可」
+  // として扱っても currentQuestionIndex 等の競合を起こさないようにする。
   const updatedIndex = Math.min(nextTurnCount, MAX_TURNS);
 
   const [updatedSession] = await db
@@ -200,11 +221,6 @@ export async function handleUserTurn(params: {
     .where(eq(sessions.id, sessionId))
     .returning();
 
-  const allMessages = await db.query.messages.findMany({
-    where: eq(messages.sessionId, sessionId),
-    orderBy: asc(messages.createdAt),
-  });
-
   // UX3: 直前に計算済みの nodeCoverage を再利用し、KB の二重読み込みを避ける。
   const progress = buildInterviewProgress({
     extracted: updatedExtracted,
@@ -212,5 +228,58 @@ export async function handleUserTurn(params: {
     nodeCoverage,
   });
 
-  return { session: updatedSession, messages: allMessages, progress };
+  return {
+    message: assistantMessage,
+    session: updatedSession,
+    progress,
+    needsGapRecompute: refreshGaps,
+    gapRecomputeContext: refreshGaps
+      ? { sessionId, slug: session.taskSlug ?? "", llmExtracted, conversationForLlm }
+      : undefined,
+  };
+}
+
+/**
+ * handleUserTurnStreaming が needsGapRecompute=true を返したときに、
+ * message 送出後（応答表示のクリティカルパスの外）で呼ぶ。
+ *
+ * 競合対策: 呼び出し時点の session スナップショットを使い回さず DB を再読込し、
+ * gaps/cautionFlags 以外のフィールドは再読込した最新値をそのまま引き継ぐ（部分マージ）。
+ * これにより、この処理が走っている間に次ターンが別フィールドを更新していても上書きしない。
+ */
+export async function recomputeDeferredGaps(
+  ctx: DeferredGapContext,
+): Promise<typeof sessions.$inferSelect | null> {
+  const { sessionId, slug, llmExtracted, conversationForLlm } = ctx;
+  const latest = await db.query.sessions.findFirst({
+    where: eq(sessions.id, sessionId),
+  });
+  if (!latest) return null;
+
+  const gaps = await recomputeGaps({
+    slug,
+    extracted: {
+      ...llmExtracted,
+      gaps: latest.extractedData.gaps,
+      cautionFlags: [],
+    },
+    conversation: conversationForLlm,
+  });
+  const cautionFlags = await detectCautionFlagsForExtracted({
+    ...llmExtracted,
+    gaps,
+    cautionFlags: [],
+  });
+
+  const mergedExtracted: SessionExtractedData = {
+    ...latest.extractedData,
+    gaps,
+    cautionFlags,
+  };
+  const [updated] = await db
+    .update(sessions)
+    .set({ extractedData: mergedExtracted })
+    .where(eq(sessions.id, sessionId))
+    .returning();
+  return updated;
 }
