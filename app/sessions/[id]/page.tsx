@@ -3,6 +3,7 @@ import { eq, asc } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { sessions, messages } from "@/lib/db/schema";
 import { loadStandardFlowSummary } from "@/lib/kb/loader";
+import { computeInterviewProgress } from "@/lib/server/interview/progress";
 import { SessionView } from "@/components/session/SessionView";
 
 export default async function SessionPage({
@@ -16,18 +17,24 @@ export default async function SessionPage({
   });
   if (!session) notFound();
 
-  const [initialMessages, standardFlow] = await Promise.all([
+  const [initialMessages, standardFlow, initialProgress] = await Promise.all([
     db.query.messages.findMany({
       where: eq(messages.sessionId, id),
       orderBy: asc(messages.createdAt),
     }),
     loadStandardFlowSummary(session.taskSlug ?? ""),
+    computeInterviewProgress({
+      extracted: session.extractedData,
+      turnCount: session.currentQuestionIndex,
+      taskSlug: session.taskSlug,
+    }),
   ]);
 
   return (
     <SessionView
       initialSession={session}
       initialMessages={initialMessages}
+      initialProgress={initialProgress}
       standardFlow={standardFlow}
     />
   );
