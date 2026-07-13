@@ -90,9 +90,30 @@ function findingKey(
 }
 
 /**
+ * 既存 gaps[] から "diff-<kind>-<n>" の n の最大値 + 1 を返す。
+ * mergeFindings が呼び出される度に local counter が 0 に戻る問題を回避し、
+ * グローバル一意な id を割り当てるための next-seq 取得ヘルパ。
+ */
+function nextSeqForKind(
+  gaps: ExtractedGap[],
+  kind: ExtractedGap["kind"],
+): number {
+  const prefix = `diff-${kind}-`;
+  let max = -1;
+  for (const g of gaps) {
+    if (!g.id.startsWith(prefix)) continue;
+    const tail = g.id.slice(prefix.length);
+    const n = Number.parseInt(tail, 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max + 1;
+}
+
+/**
  * LLM の findings を ExtractedGap[] にマージする。
  * - 既存 gap (C1 の matchedKnownGap 含む) と重複する findings は除外
- * - id は "diff-{kind}-{n}" の連番。既存 gap の id と被らないようインクリメント
+ * - id は "diff-{kind}-{n}" の連番。kind 毎に、既存 gaps[] にある最大 n + 1
+ *   からインクリメントするので C3 で呼び直されても id 衝突しない
  */
 export function mergeFindings(
   existing: ExtractedGap[],
@@ -108,7 +129,7 @@ export function mergeFindings(
   for (const g of existing) {
     seen.add(findingKey(g.kind, g.standardStepRef, g.actualStepRef));
   }
-  let seq = 0;
+  const seqByKind: Partial<Record<ExtractedGap["kind"], number>> = {};
   for (const f of llmFindings) {
     if (!f.reason || !f.reason.trim()) continue;
     const standardRef = f.standard_node_id ?? undefined;
@@ -119,8 +140,14 @@ export function mergeFindings(
     const key = findingKey(f.kind, standardRef, extractedRef);
     if (seen.has(key)) continue;
     seen.add(key);
+    // kind 毎に "既存 + 既に push 済み" の最大 seq + 1 を採用
+    if (seqByKind[f.kind] === undefined) {
+      seqByKind[f.kind] = nextSeqForKind(out, f.kind);
+    }
+    const nextN = seqByKind[f.kind]!;
+    seqByKind[f.kind] = nextN + 1;
     out.push({
-      id: `diff-${f.kind}-${seq++}`,
+      id: `diff-${f.kind}-${nextN}`,
       kind: f.kind,
       standardStepRef: standardRef,
       actualStepRef: extractedRef,

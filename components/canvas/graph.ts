@@ -54,12 +54,28 @@ function connectionNodeId(connId: string): string {
  * gaps は対応する step.id に actualStepRef が一致するもののみ
  * StepNode の data.gaps に格納する。workflow-level な gap は panel で扱う (UI 側責務)。
  */
+/**
+ * 既存 DB に重複 id の gaps が混入していた場合に React の key 衝突を
+ * 防ぐための防御的 dedup。同じ id があれば最初に現れたものだけを残す。
+ */
+function dedupeGaps(gaps: ExtractedGap[]): ExtractedGap[] {
+  const seen = new Set<string>();
+  const out: ExtractedGap[] = [];
+  for (const g of gaps) {
+    if (seen.has(g.id)) continue;
+    seen.add(g.id);
+    out.push(g);
+  }
+  return out;
+}
+
 export function buildBaseGraph(
   data: SessionExtractedData,
 ): { nodes: Node[]; edges: Edge[] } {
   const sorted = [...data.steps].sort((a, b) => a.order - b.order);
   const nodes: Node[] = [];
   const edges: Edge[] = [];
+  const dedupedGaps = dedupeGaps(data.gaps);
 
   // 概要ノード (業務名)
   let hasTaskNode = false;
@@ -81,7 +97,7 @@ export function buildBaseGraph(
     stepIdToOrder.set(step.id, i);
     stepIdToY.set(step.id, y);
 
-    const stepGaps = data.gaps.filter((g) => g.actualStepRef === step.id);
+    const stepGaps = dedupedGaps.filter((g) => g.actualStepRef === step.id);
     const stepExceptionCount = data.exceptions.filter(
       (e) => e.relatedStepId === step.id,
     ).length;
@@ -241,7 +257,7 @@ export function pickWorkflowLevelGaps(
   data: SessionExtractedData,
 ): ExtractedGap[] {
   const stepIds = new Set(data.steps.map((s) => s.id));
-  return data.gaps.filter((g) => {
+  return dedupeGaps(data.gaps).filter((g) => {
     if (!g.actualStepRef) return true;
     return !stepIds.has(g.actualStepRef);
   });
