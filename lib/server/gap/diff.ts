@@ -1,11 +1,7 @@
 import { z } from "zod";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { loadWorkflowBySlug } from "@/lib/kb/loader";
-import type {
-  MermaidGraph,
-  MermaidNode,
-  ParsedFlowStandard,
-} from "@/lib/kb/types";
+import { flattenStandardNodes, type StandardNodeRef } from "@/lib/kb/standardNodes";
 import { MODELS, openai } from "@/lib/server/openai";
 import type {
   ExtractedGap,
@@ -14,7 +10,6 @@ import type {
 
 const MIN_STEPS_TO_DIFF = 3;
 const REASON_MAX = 240;
-const LABEL_NEWLINE = /\\n|\n/g;
 
 const FindingKindSchema = z.enum(["add", "missing", "order", "local-rule"]);
 
@@ -29,48 +24,16 @@ const DiffResponseSchema = z.object({
   ),
 });
 
-export type StandardNodeRef = {
-  /** "block-2/CheckProxy" のような mermaid ブロックを含むユニークキー */
-  id: string;
-  /** mermaid ノード id (例: "CheckProxy") */
-  rawId: string;
-  label: string;
-  subgraph: string | null;
-  blockIndex: number;
-};
+// StandardNodeRef / flattenStandardNodes は lib/kb/standardNodes.ts に移設済み。
+// nodeCoverage.ts (毎ターン軽量実行、LLM 非依存) がこのファイル経由で
+// openai モジュールを引き込まないようにするための切り出し。ここでは re-export のみ行う。
+export { flattenStandardNodes };
+export type { StandardNodeRef };
 
 export type DiffInput = {
   slug: string;
   extracted: SessionExtractedData;
 };
-
-/**
- * 標準フロー (複数 mermaid ブロック) の全ノードをフラット化する。
- * 同名ノードが異なるブロックに出てきても別エントリとして扱う (block-N プレフィックス)。
- */
-export function flattenStandardNodes(
-  flowStandard: ParsedFlowStandard,
-): StandardNodeRef[] {
-  const out: StandardNodeRef[] = [];
-  flowStandard.mermaid.forEach((graph: MermaidGraph, blockIndex: number) => {
-    const subgraphByNode = new Map<string, string>();
-    for (const sg of graph.subgraphs) {
-      for (const nid of sg.nodeIds) subgraphByNode.set(nid, sg.title);
-    }
-    for (const node of graph.nodes) {
-      // ノードラベルの \n を空白に潰す (LLM に渡しやすくする)
-      const cleanLabel = (node.label || node.id).replace(LABEL_NEWLINE, " ").trim();
-      out.push({
-        id: `block-${blockIndex + 1}/${node.id}`,
-        rawId: node.id,
-        label: cleanLabel,
-        subgraph: subgraphByNode.get(node.id) ?? null,
-        blockIndex,
-      });
-    }
-  });
-  return out;
-}
 
 function clip(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -90,9 +53,30 @@ function findingKey(
 }
 
 /**
+ * 既存 gaps[] から "diff-<kind>-<n>" の n の最大値 + 1 を返す。
+ * mergeFindings が呼び出される度に local counter が 0 に戻る問題を回避し、
+ * グローバル一意な id を割り当てるための next-seq 取得ヘルパ。
+ */
+function nextSeqForKind(
+  gaps: ExtractedGap[],
+  kind: ExtractedGap["kind"],
+): number {
+  const prefix = `diff-${kind}-`;
+  let max = -1;
+  for (const g of gaps) {
+    if (!g.id.startsWith(prefix)) continue;
+    const tail = g.id.slice(prefix.length);
+    const n = Number.parseInt(tail, 10);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max + 1;
+}
+
+/**
  * LLM の findings を ExtractedGap[] にマージする。
  * - 既存 gap (C1 の matchedKnownGap 含む) と重複する findings は除外
- * - id は "diff-{kind}-{n}" の連番。既存 gap の id と被らないようインクリメント
+ * - id は "diff-{kind}-{n}" の連番。kind 毎に、既存 gaps[] にある最大 n + 1
+ *   からインクリメントするので C3 で呼び直されても id 衝突しない
  */
 export function mergeFindings(
   existing: ExtractedGap[],
@@ -108,7 +92,7 @@ export function mergeFindings(
   for (const g of existing) {
     seen.add(findingKey(g.kind, g.standardStepRef, g.actualStepRef));
   }
-  let seq = 0;
+  const seqByKind: Partial<Record<ExtractedGap["kind"], number>> = {};
   for (const f of llmFindings) {
     if (!f.reason || !f.reason.trim()) continue;
     const standardRef = f.standard_node_id ?? undefined;
@@ -119,8 +103,14 @@ export function mergeFindings(
     const key = findingKey(f.kind, standardRef, extractedRef);
     if (seen.has(key)) continue;
     seen.add(key);
+    // kind 毎に "既存 + 既に push 済み" の最大 seq + 1 を採用
+    if (seqByKind[f.kind] === undefined) {
+      seqByKind[f.kind] = nextSeqForKind(out, f.kind);
+    }
+    const nextN = seqByKind[f.kind]!;
+    seqByKind[f.kind] = nextN + 1;
     out.push({
-      id: `diff-${f.kind}-${seq++}`,
+      id: `diff-${f.kind}-${nextN}`,
       kind: f.kind,
       standardStepRef: standardRef,
       actualStepRef: extractedRef,

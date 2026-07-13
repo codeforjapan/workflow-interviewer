@@ -1,4 +1,6 @@
 import type { SessionExtractedData } from "@/lib/db/schema";
+import type { NodeCoverageResult } from "@/lib/server/interview/nodeCoverage";
+import { shouldBoostIncidents } from "@/lib/server/interview/nodeCoverage";
 import {
   _resetRiskCueCache,
   formatRiskCueAsGuide,
@@ -126,6 +128,78 @@ async function main() {
       "tier-1 + steps>=3 should be minimum-filled",
     );
     console.log("  isMinimumFilled gates correctly ✓");
+  }
+
+  // UX1: shouldBoostIncidents は本筋ノード被覆が MAIN_FLOW_COVERAGE_GATE 以上になるまで抑制する
+  {
+    const filled: SessionExtractedData = {
+      ...EMPTY,
+      taskName: "住民異動",
+      purpose: "転入転出の届出処理",
+      legalBasis: "住民基本台帳法",
+      stakeholders: ["住民", "窓口", "他課"],
+      steps: withSteps(5),
+    };
+    const lowCoverage: NodeCoverageResult = {
+      slug: "kotei-shisan-zei",
+      totalNodes: 13,
+      confirmedNodes: 3,
+      coverageRatio: 3 / 13,
+      items: [],
+      nextUnconfirmed: null,
+    };
+    const highCoverage: NodeCoverageResult = {
+      ...lowCoverage,
+      confirmedNodes: 12,
+      coverageRatio: 12 / 13,
+    };
+
+    assert(
+      !shouldBoostIncidents({
+        riskCuesCount: 2,
+        incidentsEmpty: true,
+        extracted: filled,
+        nodeCoverage: lowCoverage,
+      }),
+      "low node coverage should suppress the incidents boost",
+    );
+    assert(
+      shouldBoostIncidents({
+        riskCuesCount: 2,
+        incidentsEmpty: true,
+        extracted: filled,
+        nodeCoverage: highCoverage,
+      }),
+      "high node coverage (>=0.8) should allow the incidents boost",
+    );
+    assert(
+      shouldBoostIncidents({
+        riskCuesCount: 2,
+        incidentsEmpty: true,
+        extracted: filled,
+        nodeCoverage: null,
+      }),
+      "nodeCoverage=null (KB unavailable) should disable the gate and keep prior behavior",
+    );
+    assert(
+      !shouldBoostIncidents({
+        riskCuesCount: 0,
+        incidentsEmpty: true,
+        extracted: filled,
+        nodeCoverage: highCoverage,
+      }),
+      "no risk cues should never boost",
+    );
+    assert(
+      !shouldBoostIncidents({
+        riskCuesCount: 2,
+        incidentsEmpty: false,
+        extracted: filled,
+        nodeCoverage: highCoverage,
+      }),
+      "already-filled incidents should never re-boost",
+    );
+    console.log("  shouldBoostIncidents gated by MAIN_FLOW_COVERAGE_GATE ✓");
   }
 
   console.log("PASS");

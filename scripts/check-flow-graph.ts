@@ -180,6 +180,42 @@ function main() {
     console.log("  pickWorkflowLevelGaps ✓");
   }
 
+  // 6b) 既存 DB に重複 id の gaps が混入していても dedup される (React key 衝突防止)
+  {
+    const dup = {
+      id: "diff-missing-0",
+      kind: "missing" as const,
+      standardStepRef: "block-2/SendInquiry",
+      reason: "...",
+    };
+    const data: SessionExtractedData = {
+      ...EMPTY,
+      steps: withSteps(["a", "b"]),
+      gaps: [dup, dup, { ...dup, reason: "別文" }],
+    };
+    const workflow = pickWorkflowLevelGaps(data);
+    const ids = workflow.map((g) => g.id);
+    const unique = new Set(ids);
+    assert(
+      ids.length === unique.size,
+      `pickWorkflowLevelGaps should dedupe by id, got ${ids.join(",")}`,
+    );
+    const { nodes } = buildBaseGraph({
+      ...data,
+      gaps: [
+        { id: "g1", kind: "add", actualStepRef: "s1", reason: "x" },
+        { id: "g1", kind: "add", actualStepRef: "s1", reason: "x dup" },
+      ],
+    });
+    const s1 = nodes.find((n) => n.id === "s1")!;
+    const stepData = s1.data as unknown as StepNodeData;
+    assert(
+      stepData.gaps.length === 1,
+      `buildBaseGraph should dedupe step-bound gaps by id, got ${stepData.gaps.length}`,
+    );
+    console.log("  defensive id dedup ✓");
+  }
+
   // 7) ConnectionNodeData の整合性チェック
   {
     const data: SessionExtractedData = {

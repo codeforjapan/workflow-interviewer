@@ -1,4 +1,5 @@
 import type { SessionExtractedData } from "@/lib/db/schema";
+import type { NodeCoverageResult } from "./nodeCoverage";
 
 export type SlotKey =
   | "taskName"
@@ -100,10 +101,16 @@ export const SLOT_DEFS: Record<SlotKey, SlotDef> = {
 
 export const SLOT_KEYS: readonly SlotKey[] = Object.keys(SLOT_DEFS) as SlotKey[];
 
-/** 1 スロットあたり 0..1 の充足度を返す。0=空、1=十分。 */
+/** 1 スロットあたり 0..1 の充足度を返す。0=空、1=十分。
+ *
+ * nodeCoverage (UX1: 標準フロー本筋ノードの被覆追跡) が渡された場合、steps の充足度は
+ * 「本数が6以上で満点」という粗い判定ではなく、本筋ノードの被覆率をそのまま採用する。
+ * nodeCoverage が省略/null (KB不在等) の場合は従来の本数ベース判定にフォールバックする。
+ */
 export function slotCompleteness(
   extracted: SessionExtractedData,
   key: SlotKey,
+  nodeCoverage?: NodeCoverageResult | null,
 ): number {
   switch (key) {
     case "taskName":
@@ -117,6 +124,7 @@ export function slotCompleteness(
       return 1;
     }
     case "steps": {
+      if (nodeCoverage) return nodeCoverage.coverageRatio;
       const n = extracted.steps.length;
       if (n === 0) return 0;
       if (n < 3) return 0.3;
@@ -151,11 +159,12 @@ export function scoreSlots(
   extracted: SessionExtractedData,
   lastUserInput: string,
   boosts?: SlotBoosts,
+  nodeCoverage?: NodeCoverageResult | null,
 ): Array<{ key: SlotKey; score: number; completeness: number }> {
   const text = lastUserInput.toLowerCase();
   return SLOT_KEYS.map((key) => {
     const def = SLOT_DEFS[key];
-    const completeness = slotCompleteness(extracted, key);
+    const completeness = slotCompleteness(extracted, key, nodeCoverage);
     if (def.weight === 0) {
       return { key, score: Number.NEGATIVE_INFINITY, completeness };
     }
@@ -172,26 +181,38 @@ export function chooseNextSlot(
   extracted: SessionExtractedData,
   lastUserInput: string,
   boosts?: SlotBoosts,
+  nodeCoverage?: NodeCoverageResult | null,
 ): SlotKey | null {
-  const ranked = scoreSlots(extracted, lastUserInput, boosts);
+  const ranked = scoreSlots(extracted, lastUserInput, boosts, nodeCoverage);
   const top = ranked[0];
   if (!top || top.score <= 0) return null;
   return top.key;
 }
 
+/** 必須スロットの充足とみなす完成度の閾値。isMinimumFilled / isFinished で共有。 */
+export const REQUIRED_SLOT_THRESHOLD = 0.7;
+
 /** 最低充足ゲートを満たしているか（B3 のリスクブースト判定で使用）。 */
-export function isMinimumFilled(extracted: SessionExtractedData): boolean {
+export function isMinimumFilled(
+  extracted: SessionExtractedData,
+  nodeCoverage?: NodeCoverageResult | null,
+): boolean {
   const minSlots = SLOT_KEYS.filter((k) => SLOT_DEFS[k].requiredForMinimum);
-  return minSlots.every((k) => slotCompleteness(extracted, k) >= 0.7);
+  return minSlots.every(
+    (k) => slotCompleteness(extracted, k, nodeCoverage) >= REQUIRED_SLOT_THRESHOLD,
+  );
 }
 
 /** 最低充足ゲート + 最小ターン数を満たしたら true。 */
 export function isFinished(
   extracted: SessionExtractedData,
   turnCount: number,
+  nodeCoverage?: NodeCoverageResult | null,
 ): boolean {
   const minSlots = SLOT_KEYS.filter((k) => SLOT_DEFS[k].requiredForMinimum);
-  const allFilled = minSlots.every((k) => slotCompleteness(extracted, k) >= 0.7);
+  const allFilled = minSlots.every(
+    (k) => slotCompleteness(extracted, k, nodeCoverage) >= REQUIRED_SLOT_THRESHOLD,
+  );
   if (!allFilled) return false;
   if (turnCount < MIN_TURNS_BEFORE_FINISH) return false;
   return true;

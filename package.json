@@ -11,6 +11,7 @@
     "db:migrate": "node --env-file-if-exists=.env.local node_modules/drizzle-kit/bin.cjs migrate",
     "check:kb": "tsx scripts/check-kb-parser.ts",
     "check:slots": "tsx scripts/check-slots.ts",
+    "check:node-coverage": "tsx scripts/check-node-coverage.ts",
     "check:kb-seed": "tsx scripts/check-kb-seed.ts",
     "check:risks": "tsx scripts/check-risks.ts",
     "check:cautions": "tsx scripts/check-cautions.ts",
