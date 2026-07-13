@@ -128,3 +128,23 @@
     @apply font-sans;
   }
 }
+
+/* UX6: 標準フロー (mermaid) 側で、現在の質問が対象にしているノードをハイライトする。 */
+@keyframes ux6-target-node-pulse {
+  0%,
+  100% {
+    stroke-opacity: 1;
+  }
+  50% {
+    stroke-opacity: 0.5;
+  }
+}
+.ux6-target-node > rect,
+.ux6-target-node > polygon,
+.ux6-target-node > circle,
+.ux6-target-node > ellipse,
+.ux6-target-node > path {
+  stroke: oklch(0.6 0.19 260) !important;
+  stroke-width: 3px !important;
+  animation: ux6-target-node-pulse 1.6s ease-in-out infinite;
+}

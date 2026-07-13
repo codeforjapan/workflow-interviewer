@@ -12,6 +12,9 @@ export type NodeCoverageItem = {
   rawId: string;
   label: string;
   subgraph: string | null;
+  /** 0-based。KB.loader の StandardFlowSummary.mermaidSources と同じインデックス
+   *  (UX6: フロント側でどの mermaid ブロックをハイライトするか特定するために使う)。 */
+  blockIndex: number;
   status: "confirmed" | "unconfirmed";
   /** 確認済みなら根拠となった steps[].id (最高スコアの1件)。 */
   matchedStepId: string | null;
@@ -85,6 +88,7 @@ export function matchStepsToNodes(
       rawId: node.rawId,
       label: node.label,
       subgraph: node.subgraph,
+      blockIndex: node.blockIndex,
       status: confirmed ? "confirmed" : "unconfirmed",
       matchedStepId: confirmed ? bestStepId : null,
       score: bestScore,
