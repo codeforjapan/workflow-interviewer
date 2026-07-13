@@ -5,6 +5,12 @@ psid_lifecycle_also: ["L2"]
 spec_ref: "地方税法第340条〜第369条（固定資産税）標準運用ガイド（令和6年、総務省）"
 spec_law: "第340条〜第369条（固定資産税）、第389条（評価替え）"
 flow_type: "standard"
+
+creates_risks:
+  - target: "incident-catalog/INC-008-inheritance-unregistered-tax.md"
+    condition: "相続人が登記変更（相続登記）をしないまま放置し、課税台帳が被相続人（故人）名義のまま据え置かれている場合"
+  - target: "incident-catalog/INC-D03-disaster-certificate-dispute.md"
+    condition: "災害による罹災証明書の被害認定区分（全壊・大規模半壊・半壊等）をもとに固定資産税の減免判定を行うが、住民が第2次調査（不服申立）の申請方法を知らないまま期限が過ぎた場合"
 ---
 
 # 固定資産税 標準業務フロー

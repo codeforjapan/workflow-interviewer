@@ -68,24 +68,30 @@ async function main() {
     console.log("  pickUnmatchedCandidates filters matched ✓");
   }
 
-  // 4) mergeMatches が matched=true のみを ExtractedGap として追加
+  // 4) mergeMatches が status="matched"/"partial" のみを ExtractedGap として追加
   {
     const llmMatches = [
-      { gap_index: 1, matched: true, reason: "代理申請でばらつきがある旨の発話あり" },
-      { gap_index: 2, matched: false, reason: null },
-      { gap_index: 3, matched: true, reason: null }, // reason 空 → title フォールバック
+      { gap_index: 1, status: "matched" as const, reason: "代理申請でばらつきがある旨の発話あり" },
+      { gap_index: 2, status: "not_matched" as const, reason: null },
+      { gap_index: 3, status: "matched" as const, reason: null }, // reason 空 → title フォールバック
+      { gap_index: 4, status: "partial" as const, reason: "同じ業務領域への言及はあるが確証なし" },
     ];
     const merged = mergeMatches([], candidates, llmMatches, "inkan-toroku");
-    assert(merged.length === 2, `expected 2 merged gaps, got ${merged.length}`);
+    assert(merged.length === 3, `expected 3 merged gaps, got ${merged.length}`);
     const g1 = merged.find((g) => g.matchedKnownGap === "inkan-toroku/gap-1");
     assert(g1 != null, "gap-1 should be merged");
     assert(g1!.kind === "local-rule", "kind should be local-rule");
     assert(g1!.reason.includes("ばらつき"), `reason: ${g1!.reason}`);
+    assert(g1!.severity === undefined, "matched status should not set severity");
     const g3 = merged.find((g) => g.matchedKnownGap === "inkan-toroku/gap-3");
     assert(g3 != null, "gap-3 should be merged with fallback reason");
     const cand3 = candidates.find((c) => c.index === 3);
     assert(g3!.reason === cand3!.title, "gap-3 reason should fall back to title");
-    console.log("  mergeMatches basic ✓");
+    const g4 = merged.find((g) => g.matchedKnownGap === "inkan-toroku/gap-4");
+    assert(g4 != null, "gap-4 (partial) should be merged");
+    assert(g4!.severity === "low", "partial status should set severity=low");
+    assert(g4!.reason.startsWith("（部分一致・要確認）"), `partial reason should be prefixed: ${g4!.reason}`);
+    console.log("  mergeMatches basic (matched/partial/not_matched) ✓");
   }
 
   // 5) mergeMatches dedup: 既に matchedKnownGap がある場合は追加しない
@@ -98,7 +104,7 @@ async function main() {
         matchedKnownGap: "inkan-toroku/gap-1",
       },
     ];
-    const llmMatches = [{ gap_index: 1, matched: true, reason: "二度目" }];
+    const llmMatches = [{ gap_index: 1, status: "matched" as const, reason: "二度目" }];
     const merged = mergeMatches(existing, candidates, llmMatches, "inkan-toroku");
     assert(merged.length === 1, `should not duplicate, got ${merged.length}`);
     assert(merged[0].reason === "既存", "existing entry should be preserved");
@@ -118,7 +124,7 @@ async function main() {
       },
       async (cands) => cands.map((c) => ({
         gap_index: c.index,
-        matched: c.index === 1,
+        status: c.index === 1 ? ("matched" as const) : ("not_matched" as const),
         reason: c.index === 1 ? "ばらつきの発話と一致" : null,
       })),
     );

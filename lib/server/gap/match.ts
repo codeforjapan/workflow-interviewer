@@ -7,15 +7,21 @@ import type {
   ExtractedGap,
   SessionExtractedData,
 } from "@/lib/server/interview/schema";
+import { MAX_TURNS } from "@/lib/server/interview/slots";
 
-const CONVERSATION_TAIL = 10;
+// MAX_TURNS ターン分の会話 (opener 含め最大 MAX_TURNS*2+1 メッセージ) を
+// 丸ごと渡せるだけの余裕を持たせる。MAX_TURNS が変わっても追随する。
+// 以前は固定 10 (直近5往復) だったため、20ターン会話の大半が切り捨てられていた。
+const CONVERSATION_TAIL = MAX_TURNS * 2 + 4;
 const MATCH_REASON_MAX = 240;
+
+const GapMatchStatusSchema = z.enum(["matched", "partial", "not_matched"]);
 
 const GapMatchResponseSchema = z.object({
   matches: z.array(
     z.object({
       gap_index: z.number().int(),
-      matched: z.boolean(),
+      status: GapMatchStatusSchema,
       reason: z.string().nullable(),
     }),
   ),
@@ -100,6 +106,9 @@ export function summarizeContext(
     taskName: extracted.taskName,
     purpose: extracted.purpose,
     steps: extracted.steps.map((s) => s.label),
+    connections: extracted.connections.map(
+      (c) => `${c.target.type}:${c.target.label}${c.note ? `（${c.note}）` : ""}`,
+    ),
     exceptions: extracted.exceptions.map((e) => `${e.label} / ${e.condition}`),
     incidents: extracted.incidents.map((i) => i.scenario),
   };
@@ -109,7 +118,9 @@ export function summarizeContext(
 /**
  * LLM 判定結果を ExtractedGap[] に取り込む（既存配列に追加して返す）。
  *
- * - matched=false は無視
+ * - status="not_matched" は無視
+ * - status="partial" は severity="low" を付け、reason の先頭に「（部分一致・要確認）」を付与して
+ *   確証は無いが手がかりがあることを表面化する（"迷ったらfalseで握りつぶす"問題への対処）
  * - 既に同じ matchedKnownGap がある場合は重複追加しない
  * - reason が null/空なら gap.title をフォールバック
  * - kind は "local-rule" 固定（known gap は基本的に自治体差分なため）
@@ -117,7 +128,11 @@ export function summarizeContext(
 export function mergeMatches(
   existing: ExtractedGap[],
   candidates: GapMatchCandidate[],
-  llmMatches: Array<{ gap_index: number; matched: boolean; reason: string | null }>,
+  llmMatches: Array<{
+    gap_index: number;
+    status: "matched" | "partial" | "not_matched";
+    reason: string | null;
+  }>,
   slug: string,
 ): ExtractedGap[] {
   const out = [...existing];
@@ -125,17 +140,19 @@ export function mergeMatches(
     existing.map((g) => g.matchedKnownGap).filter((v): v is string => !!v),
   );
   for (const m of llmMatches) {
-    if (!m.matched) continue;
+    if (m.status === "not_matched") continue;
     const cand = candidates.find((c) => c.index === m.gap_index);
     if (!cand) continue;
     const ref = formatGapRef(slug, cand.index);
     if (matchedRefs.has(ref)) continue;
-    const reason = m.reason?.trim() || cand.title;
+    const reasonBase = m.reason?.trim() || cand.title;
+    const reason = m.status === "partial" ? `（部分一致・要確認）${reasonBase}` : reasonBase;
     out.push({
       id: `kb-gap-${cand.index}`,
       kind: "local-rule",
       reason: clip(reason, MATCH_REASON_MAX),
       matchedKnownGap: ref,
+      ...(m.status === "partial" ? { severity: "low" as const } : {}),
     });
     matchedRefs.add(ref);
   }
@@ -144,13 +161,16 @@ export function mergeMatches(
 
 const SYSTEM_PROMPT = `あなたは標準業務フローと現場フローのギャップ照合エンジンです。
 以下の既知ギャップそれぞれについて、職員の発話および現在の抽出データから判断して、
-そのギャップが今回のインタビュー対象でも該当しそうかを matched: true/false で判定してください。
+そのギャップが今回のインタビュー対象でも該当しそうかを 3 段階で判定してください。
+
+判定区分:
+- "matched": 現実セクションに書かれた状況と明確に一致する発言・状況が会話・抽出データにある
+- "partial": 完全な確証はないが、関連しそうな話題への言及がある（同じ業務領域・同じ関係者・近い困りごとに触れているが、断定できるほど明示的ではない）
+- "not_matched": 関連する発言・状況が見当たらない
 
 ルール:
-- 「該当しそう」とは、現実セクションに書かれた状況と類似する状況が会話・抽出データに見られること
-- 推測や創作は禁止。明示的に該当する発言や状況がない場合は false
-- 迷う場合は false
-- reason は短く（150 字以内）。matched=false のときは null で可
+- 推測や創作で「該当した」と断定してはならない。ただし "partial" は会話に何らかの手がかりがあれば積極的に使ってよい（未確認だからといって無視すべきではない）
+- reason は短く（240 字以内）。"partial" のときは何が根拠で何が未確認かを一言添える。"not_matched" のときは null で可
 - gap_index は与えられた既知ギャップの index をそのまま返す`;
 
 /**
@@ -160,7 +180,9 @@ const SYSTEM_PROMPT = `あなたは標準業務フローと現場フローのギ
 async function callOpenAIMatcher(
   candidates: GapMatchCandidate[],
   context: string,
-): Promise<Array<{ gap_index: number; matched: boolean; reason: string | null }>> {
+): Promise<
+  Array<{ gap_index: number; status: "matched" | "partial" | "not_matched"; reason: string | null }>
+> {
   if (candidates.length === 0) return [];
   const completion = await openai.chat.completions.parse({
     model: MODELS.extract,
@@ -181,7 +203,9 @@ async function callOpenAIMatcher(
 export type GapMatcher = (
   candidates: GapMatchCandidate[],
   context: string,
-) => Promise<Array<{ gap_index: number; matched: boolean; reason: string | null }>>;
+) => Promise<
+  Array<{ gap_index: number; status: "matched" | "partial" | "not_matched"; reason: string | null }>
+>;
 
 /**
  * 対象業務 KB の既知ギャップと現在の会話・抽出データを LLM で照合し、
@@ -212,7 +236,11 @@ export async function matchKnownGaps(
   );
   if (candidates.length === 0) return input.extracted.gaps;
 
-  let llmMatches: Array<{ gap_index: number; matched: boolean; reason: string | null }>;
+  let llmMatches: Array<{
+    gap_index: number;
+    status: "matched" | "partial" | "not_matched";
+    reason: string | null;
+  }>;
   try {
     const context = summarizeContext(input.extracted, input.conversation);
     llmMatches = await matcher(candidates, context);

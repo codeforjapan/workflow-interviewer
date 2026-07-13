@@ -44,6 +44,15 @@ async function main() {
     console.log("  inkan-toroku -> 0 cues ✓");
   }
 
+  // kotei-shisan-zei: UX2 (issue #36) で creates_risks を新規追加 -> 2 cues (INC-008, INC-D03)
+  {
+    const cues = await loadRiskCues("kotei-shisan-zei");
+    assert(cues.length === 2, `kotei-shisan-zei should yield 2 cues, got ${cues.length}`);
+    assert(cues.some((c) => c.incidentId === "INC-008"), "INC-008 cue missing");
+    assert(cues.some((c) => c.incidentId === "INC-D03"), "INC-D03 cue missing");
+    console.log(`  kotei-shisan-zei -> ${cues.length} cues ✓`);
+  }
+
   // jyumin-ido: creates_risks が複数定義済み
   {
     const cues = await loadRiskCues("jyumin-ido");
@@ -156,7 +165,7 @@ async function main() {
 
     assert(
       !shouldBoostIncidents({
-        riskCuesCount: 2,
+        cuesCount: 2,
         incidentsEmpty: true,
         extracted: filled,
         nodeCoverage: lowCoverage,
@@ -165,7 +174,7 @@ async function main() {
     );
     assert(
       shouldBoostIncidents({
-        riskCuesCount: 2,
+        cuesCount: 2,
         incidentsEmpty: true,
         extracted: filled,
         nodeCoverage: highCoverage,
@@ -174,7 +183,7 @@ async function main() {
     );
     assert(
       shouldBoostIncidents({
-        riskCuesCount: 2,
+        cuesCount: 2,
         incidentsEmpty: true,
         extracted: filled,
         nodeCoverage: null,
@@ -183,7 +192,7 @@ async function main() {
     );
     assert(
       !shouldBoostIncidents({
-        riskCuesCount: 0,
+        cuesCount: 0,
         incidentsEmpty: true,
         extracted: filled,
         nodeCoverage: highCoverage,
@@ -192,7 +201,7 @@ async function main() {
     );
     assert(
       !shouldBoostIncidents({
-        riskCuesCount: 2,
+        cuesCount: 2,
         incidentsEmpty: false,
         extracted: filled,
         nodeCoverage: highCoverage,

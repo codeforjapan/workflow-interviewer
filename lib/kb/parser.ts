@@ -6,6 +6,7 @@ import {
   GapNotesFrontmatterSchema,
   IncidentFrontmatterSchema,
   type ConceptSection,
+  type FlowStandardMermaidBlock,
   type Gap,
   type GapSection,
   type IncidentSection,
@@ -23,15 +24,32 @@ const SECTION_HEADING = /^\*\*([^*]+?)\*\*\s*[：:]\s*(.*)$/gm;
 const H2_HEADING = /^## (.+?)\s*$/gm;
 const WHAT_HAPPENS_HEADING = "何が起きるか";
 
+/**
+ * pos より前にある最後の `## ` 見出し文字列を返す（無ければ null）。
+ * flow-standard.md の各 mermaid ブロックがどの標準フロー（年度課税台帳整備／
+ * 評価替え／新築増改築 等）に属するかを、diff.ts (C2) に伝えるために使う。
+ */
+function findPrecedingH2(markdown: string, pos: number): string | null {
+  H2_HEADING.lastIndex = 0;
+  let title: string | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = H2_HEADING.exec(markdown)) !== null) {
+    if (m.index >= pos) break;
+    title = m[1].trim();
+  }
+  return title;
+}
+
 export function parseFlowStandard(markdown: string): ParsedFlowStandard {
   const parsed = matter(markdown);
   const frontmatter = FlowStandardFrontmatterSchema.parse(parsed.data);
 
-  const mermaid = [];
+  const mermaid: FlowStandardMermaidBlock[] = [];
   MERMAID_FENCE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = MERMAID_FENCE.exec(markdown)) !== null) {
-    mermaid.push(parseMermaidFlowchart(match[1]));
+    const graph = parseMermaidFlowchart(match[1]);
+    mermaid.push({ ...graph, flowTitle: findPrecedingH2(markdown, match.index) });
   }
 
   return { frontmatter, mermaid, raw: markdown };
@@ -104,15 +122,32 @@ export function parseGapNotes(markdown: string): ParsedGapNotes {
     });
   }
 
+  // 最後のギャップの本文が、ファイル末尾の無関係な汎用セクション
+  // (例:「## 標準仕様書が定めておらず...」「## 差分の構造的な意味」) を
+  // 飲み込んでしまうのを防ぐため、次のギャップ見出しに加えて次の汎用 H2 見出しも
+  // 境界候補にする。
+  const h2Positions: number[] = [];
+  H2_HEADING.lastIndex = 0;
+  while ((m = H2_HEADING.exec(content)) !== null) {
+    h2Positions.push(m.index);
+  }
+
+  function boundaryAfter(pos: number): number {
+    let boundary = content.length;
+    for (const h of headings) {
+      if (h.start > pos && h.start < boundary) boundary = h.start;
+    }
+    for (const h2 of h2Positions) {
+      if (h2 > pos && h2 < boundary) boundary = h2;
+    }
+    return boundary;
+  }
+
   const gaps: Gap[] = [];
-  for (let i = 0; i < headings.length; i += 1) {
-    const cur = headings[i];
-    const next = headings[i + 1];
-    const block = content.slice(cur.start, next ? next.start : content.length);
-    const bodyAfterHeading = content.slice(
-      cur.headerEnd,
-      next ? next.start : content.length,
-    );
+  for (const cur of headings) {
+    const end = boundaryAfter(cur.start);
+    const block = content.slice(cur.start, end);
+    const bodyAfterHeading = content.slice(cur.headerEnd, end);
     gaps.push({
       index: cur.index,
       title: cur.title,
