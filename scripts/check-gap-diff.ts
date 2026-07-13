@@ -132,6 +132,49 @@ async function main() {
     console.log("  mergeFindings dedup ✓");
   }
 
+  // 4b) mergeFindings id uniqueness: 既存 "diff-missing-0" がある場合、
+  //     新規 missing は "diff-missing-1" 以降になる (C3 で複数回呼ばれても衝突しない)
+  {
+    const existing = [
+      {
+        id: "diff-missing-0",
+        kind: "missing" as const,
+        standardStepRef: "block-1/CheckResidence",
+        reason: "(既存 0)",
+      },
+      {
+        id: "diff-missing-1",
+        kind: "missing" as const,
+        standardStepRef: "block-1/CheckAge",
+        reason: "(既存 1)",
+      },
+    ];
+    const llm = [
+      {
+        kind: "missing" as const,
+        standard_node_id: "block-2/SendInquiry",
+        extracted_step_id: null,
+        reason: "新規 1",
+      },
+      {
+        kind: "missing" as const,
+        standard_node_id: "block-2/WaitReply",
+        extracted_step_id: null,
+        reason: "新規 2",
+      },
+    ];
+    const merged = mergeFindings(existing, llm);
+    const ids = merged.map((g) => g.id);
+    const uniqueIds = new Set(ids);
+    assert(
+      ids.length === uniqueIds.size,
+      `id collision: ${JSON.stringify(ids)}`,
+    );
+    assert(ids.includes("diff-missing-2"), `expected diff-missing-2, got ${ids.join(",")}`);
+    assert(ids.includes("diff-missing-3"), `expected diff-missing-3, got ${ids.join(",")}`);
+    console.log("  mergeFindings id uniqueness across calls ✓");
+  }
+
   // 5) C1 の matchedKnownGap 付き gap と C2 findings は共存する (dedup キーがバラける)
   {
     const c1Gap = {

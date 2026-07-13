@@ -5,6 +5,7 @@ import { zodResponseFormat } from "openai/helpers/zod";
 import { loadStandardFlowSummary } from "@/lib/kb/loader";
 import { MODELS, openai } from "@/lib/server/openai";
 import type { SessionExtractedData } from "@/lib/db/schema";
+import type { NodeCoverageResult } from "./nodeCoverage";
 
 const WORKFLOW_DOCS_ROOT = path.join(process.cwd(), "docs", "workflow");
 const MAX_SNIPPETS = 5;
@@ -36,6 +37,7 @@ export async function generateAdaptiveQuestion(params: {
   conversation: InterviewMessage[];
   extracted: SessionExtractedData;
   taskSlug?: string | null;
+  nodeCoverage?: NodeCoverageResult | null;
 }): Promise<FollowupResult> {
   const {
     sessionId,
@@ -45,6 +47,7 @@ export async function generateAdaptiveQuestion(params: {
     conversation,
     extracted,
     taskSlug,
+    nodeCoverage,
   } = params;
   try {
     const [snippets, kbStandardFlow] = await Promise.all([
@@ -69,6 +72,7 @@ export async function generateAdaptiveQuestion(params: {
           .join("\n---\n")
           .slice(0, MAX_KB_FLOW_CHARS)}`
       : "";
+    const nodeCoverageSection = buildNodeCoverageSection(nodeCoverage);
 
     const completion = await openai.chat.completions.parse({
       model: MODELS.chat,
@@ -95,7 +99,7 @@ ${conversationText || "(まだ会話なし)"}
 ${JSON.stringify(extracted)}
 
 docs/workflow 抜粋:
-${context}${kbFlowSection}`,
+${context}${kbFlowSection}${nodeCoverageSection}`,
         },
       ],
       response_format: zodResponseFormat(FollowupSchema, "next_followup"),
@@ -113,6 +117,23 @@ ${context}${kbFlowSection}`,
   } catch {
     return { content: guideQuestion, choices: [] };
   }
+}
+
+/**
+ * 未確認の本筋ノードラベルをプロンプトに埋め込む。kbFlowSection (生 mermaid ダンプ) と違い
+ * 構造化済みで、質問選択がどの標準ステップを優先すべきかを明示する主たる誘導シグナル。
+ */
+function buildNodeCoverageSection(nodeCoverage: NodeCoverageResult | null | undefined): string {
+  if (!nodeCoverage || nodeCoverage.totalNodes === 0) return "";
+  const unconfirmed = nodeCoverage.items.filter((i) => i.status === "unconfirmed");
+  if (unconfirmed.length === 0) return "";
+  const lines = unconfirmed
+    .slice(0, 8)
+    .map((i) => `- ${i.label}${i.subgraph ? `（${i.subgraph}）` : ""}`)
+    .join("\n");
+  return `\n\n標準フロー主要ステップの確認状況: ${nodeCoverage.confirmedNodes}/${nodeCoverage.totalNodes} 件確認済み。
+未確認の主要ステップ（優先して確認する。担保物件・例外運用など周辺的な詳細より優先）:
+${lines}`;
 }
 
 function uniq(values: string[]): string[] {
@@ -185,6 +206,7 @@ function buildSystemPrompt(taskSlug?: string | null): string {
 
 質問本文のルール:
 - 標準フローや docs/workflow 抜粋の文脈に沿った具体化を優先する
+- 標準フロー主要ステップがまだ未確認の間は、その確認を最優先し、周辺的な詳細（担保・例外・過去のミス等）を深追いしない
 - 推測や断定はしない
 - 1文・120文字以内
 - 回答者が答えやすい自然な口調

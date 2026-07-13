@@ -1,7 +1,9 @@
 import type { SessionExtractedData } from "@/lib/db/schema";
+import type { NodeCoverageResult } from "@/lib/server/interview/nodeCoverage";
 import {
   chooseNextSlot,
   isFinished,
+  isMinimumFilled,
   MAX_TURNS,
   MIN_TURNS_BEFORE_FINISH,
   scoreSlots,
@@ -142,6 +144,50 @@ function main() {
     assert(slotCompleteness({ ...EMPTY, steps: withSteps(3) }, "steps") === 0.7, "steps 3 = 0.7");
     assert(slotCompleteness({ ...EMPTY, steps: withSteps(6) }, "steps") === 1, "steps 6 = 1.0");
     console.log("  case#8 completeness boundaries ✓");
+  }
+
+  // Case 9 (UX1 回帰再現): steps が本数条件 (6件) を満たしていても、
+  // nodeCoverage の被覆率が低ければ isMinimumFilled/isFinished は true にならない。
+  // デモで観測された「本数さえ揃えば本筋が薄くても質問が止まる」不具合の再現・修正証明。
+  {
+    const filled: SessionExtractedData = {
+      ...EMPTY,
+      taskName: "固定資産税",
+      purpose: "適正な課税",
+      legalBasis: "地方税法",
+      stakeholders: ["住民", "課税担当", "収納担当"],
+      steps: withSteps(6),
+    };
+    // nodeCoverage なし (フォールバック): 従来通り steps 6件で充足扱い
+    assert(isMinimumFilled(filled), "without nodeCoverage, steps>=6 should still be minimum-filled");
+
+    const lowCoverage: NodeCoverageResult = {
+      slug: "kotei-shisan-zei",
+      totalNodes: 13,
+      confirmedNodes: 3,
+      coverageRatio: 3 / 13,
+      items: [],
+      nextUnconfirmed: null,
+    };
+    assert(
+      !isMinimumFilled(filled, lowCoverage),
+      "with low nodeCoverage, steps count alone should NOT satisfy minimum-filled",
+    );
+    assert(
+      !isFinished(filled, MAX_TURNS, lowCoverage),
+      "with low nodeCoverage, isFinished should stay false even at MAX_TURNS",
+    );
+
+    const highCoverage: NodeCoverageResult = {
+      ...lowCoverage,
+      confirmedNodes: 12,
+      coverageRatio: 12 / 13,
+    };
+    assert(
+      isMinimumFilled(filled, highCoverage),
+      "with high nodeCoverage (>=0.7), minimum-filled should hold",
+    );
+    console.log("  case#9 low node coverage blocks isMinimumFilled/isFinished despite steps>=6 ✓");
   }
 
   console.log(`PASS (MAX_TURNS=${MAX_TURNS}, MIN_TURNS_BEFORE_FINISH=${MIN_TURNS_BEFORE_FINISH})`);
