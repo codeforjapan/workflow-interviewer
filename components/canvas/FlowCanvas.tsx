@@ -20,6 +20,7 @@ import "@xyflow/react/dist/style.css";
 import { Button } from "@/components/ui/button";
 import {
   ConnectionExternalNode,
+  ExceptionNode,
   GroupBoxNode,
   StepNode,
 } from "./CustomNodes";
@@ -29,6 +30,7 @@ import {
   GROUP_NODE_PREFIX,
   isGroupNodeId,
   pickWorkflowLevelGaps,
+  type StepNodeData,
 } from "./graph";
 import type { FlowLayout, SessionExtractedData } from "@/lib/db/schema";
 import type { ExtractedGap } from "@/lib/server/interview/schema";
@@ -64,6 +66,7 @@ const GAP_KIND_ORDER: ExtractedGap["kind"][] = ["missing", "add", "order", "loca
 const nodeTypes = {
   step: StepNode,
   connectionExternal: ConnectionExternalNode,
+  exception: ExceptionNode,
   groupBox: GroupBoxNode,
 };
 
@@ -72,12 +75,17 @@ export function FlowCanvas({
   flowLayout,
   onFlowChange,
   onNodeSelect,
+  onSendMessage,
+  sending = false,
   readonly = false,
 }: {
   extracted: SessionExtractedData;
   flowLayout: FlowLayout;
   onFlowChange?: (layout: FlowLayout) => void;
   onNodeSelect?: (nodeId: string) => void;
+  /** ワークフロー全体のギャップダイアログから、気づいたことをチャットとして送る (SessionView.sendMessage 相当)。 */
+  onSendMessage?: (text: string) => void;
+  sending?: boolean;
   readonly?: boolean;
 }) {
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<Node>([]);
@@ -102,6 +110,16 @@ export function FlowCanvas({
   }, [edges, extracted, flowLayout, handleGapClick, nodes, setEdges, setNodes]);
 
   const workflowGaps = useMemo(() => pickWorkflowLevelGaps(extracted), [extracted]);
+
+  // ダイアログ表示中のギャップが解決されて一覧から消えたら、ダイアログも自動で閉じる
+  // (issue: モーダルから回答してギャップが解消されても、開いたままのダイアログが古い内容を表示し続ける)。
+  // レンダー中に state を調整する React 推奨パターン (useEffect だと1フレーム古い内容が見える)。
+  // workflowGaps ではなく extracted.gaps 全体と照合する: workflowGaps は step に紐づく
+  // gap (add/order/local-rule の大半) を除外しているため、step ノードのバッジ経由で開いた
+  // ダイアログ (handleGapClick) がここで誤って即座に閉じられてしまう回帰があった。
+  if (activeGap && !extracted.gaps.some((g) => g.id === activeGap.id)) {
+    setActiveGap(null);
+  }
 
   const emitFlowChange = useCallback(
     (nextNodes: Node[], nextEdges: Edge[]) => {
@@ -295,7 +313,12 @@ export function FlowCanvas({
         <Controls />
       </ReactFlow>
 
-      <GapDialog gap={activeGap} onOpenChange={(open) => !open && setActiveGap(null)} />
+      <GapDialog
+        gap={activeGap}
+        onOpenChange={(open) => !open && setActiveGap(null)}
+        onSendMessage={readonly ? undefined : onSendMessage}
+        sending={sending}
+      />
     </div>
   );
 }
@@ -327,6 +350,17 @@ function applyEdgeRemovals(edges: Edge[], changes: EdgeChange<Edge>[]) {
   return edges.filter((edge) => !removeIds.has(edge.id));
 }
 
+// step ノードの gaps/exceptionCount は label/position が変わらなくても変化しうる
+// (issue: 3ターン毎の gap 再計算による session イベントは gaps/cautionFlags だけを更新するため、
+// これをフィンガープリントに含めないと、ギャップが解消/追加されても canvas 上のバッジが
+// 次にラベルや位置が変わるまで古いまま残ってしまっていた)。
+function stepNodeFingerprint(node: Node): string {
+  if (node.type !== "step") return "";
+  const data = node.data as unknown as Partial<StepNodeData> | undefined;
+  const gapIds = (data?.gaps ?? []).map((g) => g.id).join(",");
+  return `${gapIds}|${data?.exceptionCount ?? 0}`;
+}
+
 function areNodesEqual(a: Node[], b: Node[]) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
@@ -337,6 +371,7 @@ function areNodesEqual(a: Node[], b: Node[]) {
     if (an.type !== bn.type) return false;
     if (an.position.x !== bn.position.x || an.position.y !== bn.position.y) return false;
     if (String(an.data?.label ?? "") !== String(bn.data?.label ?? "")) return false;
+    if (stepNodeFingerprint(an) !== stepNodeFingerprint(bn)) return false;
   }
   return true;
 }

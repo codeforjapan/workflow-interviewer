@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type {
   ConnectionNodeData,
+  ExceptionNodeData,
   StepNodeData,
 } from "./graph";
 import type { ExtractedGap } from "@/lib/server/interview/schema";
@@ -141,6 +142,31 @@ export function ConnectionExternalNode({
         <div className="mt-0.5 line-clamp-2 text-[10px] opacity-70">{data.note}</div>
       )}
       <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
+export function ExceptionNode({
+  data,
+}: NodeProps<Node<ExceptionNodeData>>) {
+  return (
+    <div className="rounded-md border border-dashed border-red-300 bg-red-50 p-2 text-xs shadow-sm dark:border-red-800 dark:bg-red-950/30">
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-1">
+        <AlertTriangleIcon className="size-3 text-red-700 dark:text-red-300" />
+        <span className="text-[10px] font-medium uppercase text-red-700 opacity-70 dark:text-red-300">
+          例外
+        </span>
+      </div>
+      <div className="mt-0.5 font-medium text-red-900 dark:text-red-100">{data.label}</div>
+      <div className="mt-0.5 line-clamp-2 text-[10px] text-red-800/80 dark:text-red-200/80">
+        条件: {data.condition}
+      </div>
+      {data.frequency && (
+        <div className="mt-0.5 text-[10px] text-red-800/70 dark:text-red-200/70">
+          頻度: {data.frequency}
+        </div>
+      )}
     </div>
   );
 }

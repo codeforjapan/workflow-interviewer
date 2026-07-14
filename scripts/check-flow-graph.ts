@@ -1,6 +1,7 @@
-import type { SessionExtractedData } from "@/lib/db/schema";
+import type { FlowLayout, SessionExtractedData } from "@/lib/db/schema";
 import {
   buildBaseGraph,
+  buildGraph,
   CONNECTION_NODE_PREFIX,
   pickWorkflowLevelGaps,
   type ConnectionNodeData,
@@ -22,6 +23,7 @@ const EMPTY: SessionExtractedData = {
   gaps: [],
   incidents: [],
   cautionFlags: [],
+  confirmedNodeIds: [],
 };
 
 function withSteps(labels: string[]) {
@@ -154,12 +156,31 @@ function main() {
         { id: "e3", relatedStepId: "s1", label: "保留", condition: "不明", frequency: null },
       ],
     };
-    const { nodes } = buildBaseGraph(data);
+    const { nodes, edges } = buildBaseGraph(data);
     const s1 = nodes.find((n) => n.id === "s1")!.data as unknown as StepNodeData;
     const s2 = nodes.find((n) => n.id === "s2")!.data as unknown as StepNodeData;
     assert(s1.exceptionCount === 1, `s1 should have 1 exception, got ${s1.exceptionCount}`);
     assert(s2.exceptionCount === 2, `s2 should have 2 exceptions, got ${s2.exceptionCount}`);
     console.log("  exceptionCount per step ✓");
+
+    // exceptions は「バッジの件数」だけでなく、関連 step から分岐する独立ノード + edge としても描画される
+    // (issue: 回答が exceptions に抽出されても、キャンバス上は件数バッジしか変わらず
+    // 「フローが更新されない」ように見えていた)。
+    for (const excId of ["e1", "e2", "e3"]) {
+      assert(
+        nodes.some((n) => n.id === `exc:${excId}` && n.type === "exception"),
+        `expected exception node exc:${excId} to exist`,
+      );
+    }
+    const e1Node = nodes.find((n) => n.id === "exc:e1")!.data as unknown as {
+      label: string;
+      condition: string;
+    };
+    assert(e1Node.label === "差し戻し" && e1Node.condition === "書類不備", "exception node data preserved");
+    assert(edges.some((e) => e.id === "e-s2-exc:e1" && e.source === "s2" && e.target === "exc:e1"), "s2->e1 edge");
+    assert(edges.some((e) => e.id === "e-s2-exc:e2" && e.source === "s2" && e.target === "exc:e2"), "s2->e2 edge");
+    assert(edges.some((e) => e.id === "e-s1-exc:e3" && e.source === "s1" && e.target === "exc:e3"), "s1->e3 edge");
+    console.log("  exceptions render as branch nodes/edges from their related step ✓");
   }
 
   // 6) pickWorkflowLevelGaps: actualStepRef なし or 不一致のものを抜き出す
@@ -240,6 +261,70 @@ function main() {
     assert(cd.note === "案内", "note preserved");
     assert(cd.ref === "external/x", "ref preserved");
     console.log("  ConnectionNodeData shape ✓");
+  }
+
+  // 8) buildGraph: 古い flowLayout (少ないstep数の頃に一度手動編集して保存されたもの) と
+  // 新しい extracted (steps/connections が増えた後の最新状態) をマージしたとき、
+  // 追加された新規ノードにも edge が補完される (real session repro: JeR6Zdx4h90T で
+  // s3〜s10・conn:c2/c3 が孤立ノードとして表示され続けていた)。
+  // 一方、ユーザーが意図的に削除した既存ノード同士の edge は復活させない。
+  {
+    const data: SessionExtractedData = {
+      ...EMPTY,
+      taskName: "テスト業務",
+      steps: withSteps(["a", "b", "c", "d"]),
+      connections: [
+        {
+          id: "c1",
+          fromStepId: "s1",
+          target: { type: "system", label: "Slack", ref: null },
+          note: null,
+        },
+        {
+          id: "c2",
+          fromStepId: "s3",
+          target: { type: "system", label: "board", ref: null },
+          note: null,
+        },
+      ],
+    };
+    // レイアウト保存時点では steps=[a,b] / connections=[c1] しか存在しなかった想定のスナップショット。
+    const staleLayout: FlowLayout = {
+      nodes: [
+        { id: "task", x: 80, y: 0 },
+        { id: "s1", x: 80, y: 100 },
+        { id: "s2", x: 80, y: 200 },
+        { id: "conn:c1", x: 520, y: 100 },
+      ],
+      edges: [
+        { id: "e-task-s1", source: "task", target: "s1" },
+        { id: "e-s1-s2", source: "s1", target: "s2" },
+        { id: "e-s1-conn:c1", source: "s1", target: "conn:c1" },
+      ],
+      groups: [],
+    };
+    const { edges } = buildGraph(data, staleLayout);
+    const edgeIds = new Set(edges.map((e) => e.id));
+    for (const expected of ["e-task-s1", "e-s1-s2", "e-s1-conn:c1", "e-s2-s3", "e-s3-s4", "e-s3-conn:c2"]) {
+      assert(edgeIds.has(expected), `expected edge ${expected} to exist, got [${[...edgeIds].join(", ")}]`);
+    }
+    console.log("  case#8a buildGraph fills in edges for steps/connections added after layout save ✓");
+
+    // ユーザーが s1->s2 の edge を明示的に削除したケース (両端とも既存ノード) は復活させない。
+    const layoutWithDeletion: FlowLayout = {
+      ...staleLayout,
+      edges: staleLayout.edges.filter((e) => e.id !== "e-s1-s2"),
+    };
+    const { edges: edgesAfterDeletion } = buildGraph(data, layoutWithDeletion);
+    assert(
+      !edgesAfterDeletion.some((e) => e.id === "e-s1-s2"),
+      "intentionally deleted edge between two known nodes should not be resurrected",
+    );
+    assert(
+      edgesAfterDeletion.some((e) => e.id === "e-s2-s3"),
+      "new-node edges should still be filled in even when an old edge was deleted",
+    );
+    console.log("  case#8b buildGraph respects a user-deleted edge between existing nodes ✓");
   }
 
   console.log("PASS");

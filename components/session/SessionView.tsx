@@ -519,6 +519,8 @@ export function SessionView({
             flowLayout={session.flowLayout}
             onFlowChange={readonly ? undefined : handleFlowChange}
             onNodeSelect={setSelectedNodeId}
+            onSendMessage={readonly || isFinished ? undefined : (text) => void sendMessage(text)}
+            sending={sending}
             readonly={readonly}
           />
         </section>

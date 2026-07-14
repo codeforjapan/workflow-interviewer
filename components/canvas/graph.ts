@@ -8,11 +8,13 @@ import type { ExtractedGap } from "@/lib/server/interview/schema";
 export const NODE_GAP_Y = 100;
 export const STEP_NODE_X = 80;
 export const CONNECTION_NODE_X = 520;
+export const EXCEPTION_NODE_X = 860;
 export const NODE_WIDTH = 220;
 export const NODE_HEIGHT = 44;
 export const GROUP_PADDING = 24;
 export const GROUP_NODE_PREFIX = "group:";
 export const CONNECTION_NODE_PREFIX = "conn:";
+export const EXCEPTION_NODE_PREFIX = "exc:";
 
 export type StepNodeData = {
   label: string;
@@ -30,6 +32,12 @@ export type ConnectionNodeData = {
   ref: string | null;
 };
 
+export type ExceptionNodeData = {
+  label: string;
+  condition: string;
+  frequency: string | null;
+};
+
 export function isGroupNodeId(id: string) {
   return id.startsWith(GROUP_NODE_PREFIX);
 }
@@ -38,8 +46,16 @@ export function isConnectionNodeId(id: string) {
   return id.startsWith(CONNECTION_NODE_PREFIX);
 }
 
+export function isExceptionNodeId(id: string) {
+  return id.startsWith(EXCEPTION_NODE_PREFIX);
+}
+
 function connectionNodeId(connId: string): string {
   return `${CONNECTION_NODE_PREFIX}${connId}`;
+}
+
+function exceptionNodeId(excId: string): string {
+  return `${EXCEPTION_NODE_PREFIX}${excId}`;
 }
 
 /**
@@ -161,6 +177,38 @@ export function buildBaseGraph(
     }
   });
 
+  // exception ノード (差し戻し・却下・保留など、通常フローから外れる分岐/早期終了)。
+  // 関連 step から実際に分岐として描画する (以前は step 上の件数バッジのみで、
+  // 「回答したのにフローが更新されない」ように見える一因だった)。
+  data.exceptions.forEach((exc, i) => {
+    const id = exceptionNodeId(exc.id);
+    const anchorY = stepIdToY.has(exc.relatedStepId)
+      ? stepIdToY.get(exc.relatedStepId)!
+      : i * NODE_GAP_Y;
+    // 同じ step に複数 exception がぶら下がる場合は少しずらす
+    const stagger = i * 12;
+    const data_: ExceptionNodeData = {
+      label: exc.label,
+      condition: exc.condition,
+      frequency: exc.frequency,
+    };
+    nodes.push({
+      id,
+      type: "exception",
+      position: { x: EXCEPTION_NODE_X, y: anchorY + stagger },
+      data: data_ as unknown as Record<string, unknown>,
+    });
+    if (stepIdToY.has(exc.relatedStepId)) {
+      edges.push({
+        id: `e-${exc.relatedStepId}-${id}`,
+        source: exc.relatedStepId,
+        target: id,
+        animated: false,
+        style: { strokeDasharray: "3 3", stroke: "#dc2626" },
+      });
+    }
+  });
+
   return { nodes, edges };
 }
 
@@ -186,19 +234,40 @@ export function buildGraph(
   );
   // 永続化された edges を採用するときも、connection 由来の dashed style は base から拾い直す
   const baseEdgeById = new Map(base.edges.map((e) => [e.id, e]));
-  const edges: Edge[] =
-    persistedEdges.length > 0
-      ? persistedEdges.map((edge) => {
-          const fromBase = baseEdgeById.get(edge.id);
-          return {
-            id: edge.id,
-            source: edge.source,
-            target: edge.target,
-            style: fromBase?.style,
-            animated: fromBase?.animated ?? false,
-          };
-        })
-      : base.edges;
+  const persistedEdgeIds = new Set(persistedEdges.map((e) => e.id));
+  // 前回レイアウト保存後にインタビューが進んで追加された step/connection は、
+  // layout.nodes に存在しない「新規ノード」になる。そうしたノードが絡む base edge だけを
+  // 補完する (persistedEdges を丸ごと使うと、以前は edges が1件でもあれば base.edges を
+  // 完全に無視していたため、新規ノードが永久に孤立してしまっていた)。
+  // 両端が既存ノードの edge をユーザーが意図的に削除したケースは復活させない。
+  //
+  // 既知の限界 (未対応、意図的に対応を見送っている):
+  // 両端とも既存ノードのまま edge の「中身」が変わるケース (connection の fromStepId が
+  // null → 特定 step に変わる、steps の並び替え等) は、id が既存かどうかしか見ていないため
+  // 反映されない (古い持続 edge が残り、新しい対応関係の edge は補完されない)。
+  // 素朴な対策 (自動生成 id が現在の base.edges に存在しなければ古いとみなして差し替える) は、
+  // onReconnect (下記) がユーザーの手動再接続時に古い edge の id を保持したまま
+  // source/target だけ書き換えるため、「ユーザーが意図的に繋ぎ直した edge」と
+  // 「トポロジー変更で本当に古くなった edge」を id だけで区別できず、うっかり実装すると
+  // ユーザーの手動再接続を消してしまうリスクがある。安全側に倒し、現状は据え置く。
+  const missingBaseEdges = base.edges.filter(
+    (edge) =>
+      !persistedEdgeIds.has(edge.id) &&
+      (!layoutNodes.has(edge.source) || !layoutNodes.has(edge.target)),
+  );
+  const edges: Edge[] = [
+    ...persistedEdges.map((edge) => {
+      const fromBase = baseEdgeById.get(edge.id);
+      return {
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        style: fromBase?.style,
+        animated: fromBase?.animated ?? false,
+      };
+    }),
+    ...missingBaseEdges,
+  ];
 
   const groupNodes = buildGroupNodes(contentNodes, layout.groups ?? []);
   const nodes = [...groupNodes, ...contentNodes];

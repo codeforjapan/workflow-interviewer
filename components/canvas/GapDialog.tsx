@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -8,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import type { ExtractedGap } from "@/lib/server/interview/schema";
 
 const KIND_LABEL: Record<ExtractedGap["kind"], string> = {
@@ -27,10 +30,35 @@ const KIND_CLASS: Record<ExtractedGap["kind"], string> = {
 export function GapDialog({
   gap,
   onOpenChange,
+  onSendMessage,
+  sending = false,
 }: {
   gap: ExtractedGap | null;
   onOpenChange: (open: boolean) => void;
+  /** UX: このギャップについて気づいたことをそのままチャットに送る (通常のチャット送信と同じ経路)。
+   *  省略時 (readonly セッションなど) は回答欄を表示しない。 */
+  onSendMessage?: (text: string) => void;
+  /** 送信中は入力・送信ボタンを無効化する (SessionView の sending state をそのまま渡す想定)。 */
+  sending?: boolean;
 }) {
+  const [answer, setAnswer] = useState("");
+  const [answerForGapId, setAnswerForGapId] = useState<string | null>(null);
+
+  // gap が切り替わる (別のギャップを開く/閉じる) たびに入力欄をリセットする。
+  // useEffect だと前のギャップの内容が1フレーム見えてしまうため、レンダー中に state を
+  // 調整する React 推奨パターンを使う (https://react.dev/learn/you-might-not-need-an-effect)。
+  if ((gap?.id ?? null) !== answerForGapId) {
+    setAnswerForGapId(gap?.id ?? null);
+    setAnswer("");
+  }
+
+  const handleSubmit = () => {
+    const trimmed = answer.trim();
+    if (!trimmed || !gap || !onSendMessage) return;
+    onSendMessage(`【${gap.reason}】への回答: ${trimmed}`);
+    setAnswer("");
+  };
+
   return (
     <Dialog open={gap !== null} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
@@ -83,6 +111,36 @@ export function GapDialog({
                   <Badge variant="outline">severity: {gap.severity}</Badge>
                 )}
                 <Badge variant="outline">id: {gap.id}</Badge>
+              </section>
+            )}
+
+            {gap.kind === "missing" && onSendMessage && (
+              <section className="space-y-2 border-t pt-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  気づいたことを回答する
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  ここに入力して送信すると、通常のチャット回答と同じように扱われます。実務でこのステップが
+                  行われていることが確認できると、このギャップは一覧から自動的に消えます。
+                </p>
+                <Textarea
+                  value={answer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                  placeholder="実際にどのように行っているか教えてください"
+                  disabled={sending}
+                  rows={3}
+                  className="resize-none text-sm"
+                />
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={sending || !answer.trim()}
+                    onClick={handleSubmit}
+                  >
+                    {sending ? "送信中…" : "送信する"}
+                  </Button>
+                </div>
               </section>
             )}
           </div>
