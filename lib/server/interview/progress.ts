@@ -1,5 +1,10 @@
-import type { SessionExtractedData } from "@/lib/db/schema";
-import { computeNodeCoverage, type NodeCoverageResult } from "./nodeCoverage";
+import type { MessageMeta, SessionExtractedData } from "@/lib/db/schema";
+import {
+  applyAskLimit,
+  computeNodeCoverage,
+  countNodeAsks,
+  type NodeCoverageResult,
+} from "./nodeCoverage";
 import {
   isFinished,
   MIN_TURNS_BEFORE_FINISH,
@@ -66,15 +71,28 @@ export function buildInterviewProgress(params: {
  * nodeCoverage をまだ持っていない呼び出し元 (API route / RSC page) 向けの非同期版。
  * computeNodeCoverage が失敗しても progress 計算全体は落とさない
  * (KB 不備が本流のターン表示を壊さないようにする)。
+ *
+ * messages: サーキットブレーカー (applyAskLimit) 判定用のメッセージ履歴。
+ * controller.ts (ターン処理中) と同じ askCounts 計算を通さないと、ターン内で表示される
+ * coverageRatio/readyToFinish とページ再読み込み後のそれが食い違ってしまう
+ * (skipped 分だけ分母が変わるため)。
  */
 export async function computeInterviewProgress(params: {
   extracted: SessionExtractedData;
   turnCount: number;
   taskSlug: string | null | undefined;
+  messages: ReadonlyArray<{ role: string; meta?: MessageMeta | null }>;
 }): Promise<InterviewProgress> {
   let nodeCoverage: NodeCoverageResult | null = null;
   try {
-    nodeCoverage = await computeNodeCoverage(params.taskSlug, params.extracted.steps);
+    const rawNodeCoverage = await computeNodeCoverage(
+      params.taskSlug,
+      params.extracted.steps,
+      new Set(params.extracted.confirmedNodeIds ?? []),
+    );
+    nodeCoverage = rawNodeCoverage
+      ? applyAskLimit(rawNodeCoverage, countNodeAsks(params.messages))
+      : null;
   } catch (err) {
     console.error("[computeInterviewProgress] node coverage failed", err);
   }

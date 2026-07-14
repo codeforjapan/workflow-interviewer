@@ -50,6 +50,7 @@ export const sessions = pgTable("sessions", {
       gaps: [],
       incidents: [],
       cautionFlags: [],
+      confirmedNodeIds: [],
     }),
   flowLayout: jsonb()
     .$type<FlowLayout>()
@@ -108,4 +109,5 @@ export const EMPTY_EXTRACTED: SessionExtractedData = {
   gaps: [],
   incidents: [],
   cautionFlags: [],
+  confirmedNodeIds: [],
 };

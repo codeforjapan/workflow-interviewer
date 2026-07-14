@@ -17,18 +17,21 @@ export default async function SessionPage({
   });
   if (!session) notFound();
 
-  const [initialMessages, standardFlow, initialProgress] = await Promise.all([
+  const [initialMessages, standardFlow] = await Promise.all([
     db.query.messages.findMany({
       where: eq(messages.sessionId, id),
       orderBy: asc(messages.createdAt),
     }),
     loadStandardFlowSummary(session.taskSlug ?? ""),
-    computeInterviewProgress({
-      extracted: session.extractedData,
-      turnCount: session.currentQuestionIndex,
-      taskSlug: session.taskSlug,
-    }),
   ]);
+  // サーキットブレーカー (applyAskLimit) 判定に必要なメッセージ履歴を渡すため、
+  // messages 取得後に実行する (以前は Promise.all で並列実行していたが、ここでは依存関係がある)。
+  const initialProgress = await computeInterviewProgress({
+    extracted: session.extractedData,
+    turnCount: session.currentQuestionIndex,
+    taskSlug: session.taskSlug,
+    messages: initialMessages,
+  });
 
   return (
     <SessionView

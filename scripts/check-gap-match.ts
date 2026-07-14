@@ -23,6 +23,7 @@ const EMPTY: SessionExtractedData = {
   gaps: [],
   incidents: [],
   cautionFlags: [],
+  confirmedNodeIds: [],
 };
 
 async function main() {

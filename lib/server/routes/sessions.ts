@@ -114,6 +114,7 @@ export const sessionsRoute = new Hono()
           gaps: [],
           incidents: [],
           cautionFlags: [],
+          confirmedNodeIds: [],
         },
       })
       .returning();
@@ -161,6 +162,7 @@ export const sessionsRoute = new Hono()
       extracted: session.extractedData,
       turnCount: session.currentQuestionIndex,
       taskSlug: session.taskSlug,
+      messages: sessionMessages,
     });
 
     return c.json({ session, messages: sessionMessages, progress });
@@ -302,6 +304,7 @@ export const sessionsRoute = new Hono()
         extracted: updated.extractedData,
         turnCount: updated.currentQuestionIndex,
         taskSlug: updated.taskSlug,
+        messages: sessionMessages,
       });
       return c.json({ session: updated, progress });
     } catch (err) {
@@ -344,13 +347,14 @@ export const sessionsRoute = new Hono()
     });
     if (!session) return c.json({ error: "session not found" }, 404);
 
+    const finalMessages = await db.query.messages.findMany({
+      where: eq(messages.sessionId, id),
+      orderBy: asc(messages.createdAt),
+    });
+
     // C3: 完了時の最終ギャップ計算 (失敗しても complete 処理は止めない)
     let finalExtracted = session.extractedData;
     try {
-      const finalMessages = await db.query.messages.findMany({
-        where: eq(messages.sessionId, id),
-        orderBy: asc(messages.createdAt),
-      });
       const conversationForLlm = finalMessages
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
@@ -426,6 +430,7 @@ JSON形式で回答してください: {"category": "<カテゴリ名>", "summar
       extracted: updated.extractedData,
       turnCount: updated.currentQuestionIndex,
       taskSlug: updated.taskSlug,
+      messages: finalMessages,
     });
     return c.json({ session: updated, progress });
   });

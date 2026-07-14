@@ -69,6 +69,17 @@ export const ExtractedBusinessInfoSchema = z.object({
   connections: z.array(ConnectionSchema),
   exceptions: z.array(ExceptionSchema),
   incidents: z.array(IncidentSchema),
+  /**
+   * UX1追加: 標準フロー本筋ノードのうち、会話全体を踏まえて実務でカバーされていると
+   * LLM 自身が判断した StandardNodeRef.id ("block-1/E") の一覧。
+   * nodeCoverage.ts の Dice 係数マッチ (steps 単体 vs ノード) は、1つのノードの内容が
+   * 複数の steps に分割されたり、ラベルと同義語で表現されたりすると絶対に閾値を超えられない
+   * (例: 「見積書作成」と「Slack承認してPDF提示」の2 stepsに分かれた「見積・提案の提示」)。
+   * ここは会話全体を見ている抽出 LLM に「このノードは (複数 steps の組み合わせでも) 実務で
+   * カバーされているか」を直接判定させる、Dice マッチを補う経路。
+   * controller.ts 側で前回値との union (ラチェット) を取り、LLM が言い忘れても既存の確認は失われない。
+   */
+  confirmedNodeIds: z.array(z.string()),
 });
 
 export type ExtractedBusinessInfo = z.infer<typeof ExtractedBusinessInfoSchema>;

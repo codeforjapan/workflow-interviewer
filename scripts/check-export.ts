@@ -91,6 +91,7 @@ const SAMPLE_EXTRACTED: SessionExtractedData = {
       ],
     },
   ],
+  confirmedNodeIds: [],
 };
 
 const SAMPLE_SESSION: Session = {
@@ -168,6 +169,7 @@ function main() {
       gaps: [],
       incidents: [],
       cautionFlags: [],
+      confirmedNodeIds: [],
     };
     const session: Session = {
       ...SAMPLE_SESSION,

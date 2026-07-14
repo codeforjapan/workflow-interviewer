@@ -3,8 +3,10 @@ import path from "node:path";
 import type { SessionExtractedData } from "@/lib/db/schema";
 import {
   _resetNodeCoverageCache,
+  applyAskLimit,
   computeNodeCoverage,
   getMainFlowNodes,
+  NODE_ASK_LIMIT,
   scoreStepAgainstNode,
 } from "@/lib/server/interview/nodeCoverage";
 
@@ -149,7 +151,55 @@ async function main() {
     );
   }
 
-  // 7) フォールバック: null / 空 / 存在しない slug はすべて null (例外を投げない)
+  // 8) confirmedNodeIds (extract.ts の LLM 判定): 実際に詰まったセッションの再現。
+  // 「見積・提案の提示」(block-1/E) の内容が「見積書作成」step と「Slack承認してPDF提示」step の
+  // 2つに分割されると、Dice はどちらの step 単体でも閾値を超えられず永遠に unconfirmed のまま
+  // (real session OaJsheZYxuvK で5回連続同じ質問が繰り返された)。LLM 判定 (confirmedNodeIds) で補う。
+  {
+    const steps = withSteps([
+      "提案書をテンプレートで作成、見積書を作成しboardとnotionのプロジェクトシートに入れる",
+      "Slackのapprovalチャンネルで承認をもらってクライアントにPDFで提示（完了条件）",
+    ]);
+    const withoutLlm = await computeNodeCoverage("sonota", steps);
+    assert(withoutLlm !== null, "expected non-null result for sonota");
+    const eWithout = withoutLlm!.items.find((i) => i.rawId === "E");
+    assert(eWithout != null, "node E should exist in sonota main flow");
+    assert(
+      eWithout!.status === "unconfirmed",
+      "node E should stay unconfirmed by Dice alone (content split across 2 steps)",
+    );
+
+    const withLlm = await computeNodeCoverage("sonota", steps, new Set(["block-1/E"]));
+    const eWith = withLlm!.items.find((i) => i.rawId === "E");
+    assert(eWith?.status === "confirmed", "node E should be confirmed via LLM confirmedNodeIds");
+    assert(eWith?.source === "llm", `expected source "llm", got ${eWith?.source}`);
+    console.log("  case#8 confirmedNodeIds rescues a node split across multiple steps (real session repro) ✓");
+  }
+
+  // 9) applyAskLimit サーキットブレーカー: 同一ノードを NODE_ASK_LIMIT 回聞いても未確認なら
+  // nextUnconfirmed の選択対象・coverageRatio の分母から除外する (詰まったセッションの安全網)。
+  {
+    const steps = withSteps(["よくわからない手順"]);
+    const base = await computeNodeCoverage("sonota", steps);
+    assert(base !== null, "expected non-null result");
+    const stuckNode = base!.nextUnconfirmed;
+    assert(stuckNode !== null, "expected an unconfirmed node to exist");
+    const askCounts = new Map([[stuckNode!.nodeId, NODE_ASK_LIMIT]]);
+    const limited = applyAskLimit(base!, askCounts);
+    const stuckAfter = limited.items.find((i) => i.nodeId === stuckNode!.nodeId);
+    assert(stuckAfter?.skipped === true, "over-asked node should be marked skipped");
+    assert(
+      limited.nextUnconfirmed?.nodeId !== stuckNode!.nodeId,
+      "skipped node should not be reselected as nextUnconfirmed",
+    );
+    assert(
+      limited.totalNodes === base!.totalNodes - 1,
+      `totalNodes should shrink by 1 (skipped excluded), got ${limited.totalNodes} vs base ${base!.totalNodes}`,
+    );
+    console.log("  case#9 applyAskLimit circuit breaker excludes over-asked node from denominator/targeting ✓");
+  }
+
+  // 10) フォールバック: null / 空 / 存在しない slug はすべて null (例外を投げない)
   {
     const steps = withSteps(["何かのステップ"]);
     assert((await computeNodeCoverage(null, steps)) === null, "null slug should yield null");
@@ -158,7 +208,7 @@ async function main() {
       (await computeNodeCoverage("nonexistent-slug-zzz", steps)) === null,
       "unknown slug should yield null, not throw",
     );
-    console.log("  case#7 null/empty/unknown slug -> null, no throw ✓");
+    console.log("  case#10 null/empty/unknown slug -> null, no throw ✓");
   }
 
   console.log("PASS");

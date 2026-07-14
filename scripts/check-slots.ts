@@ -25,6 +25,7 @@ const EMPTY: SessionExtractedData = {
   gaps: [],
   incidents: [],
   cautionFlags: [],
+  confirmedNodeIds: [],
 };
 
 function withSteps(n: number): SessionExtractedData["steps"] {

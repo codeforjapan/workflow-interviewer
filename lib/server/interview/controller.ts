@@ -4,13 +4,17 @@ import { db } from "@/lib/db/client";
 import { messages, sessions, type MessageMeta, type SessionExtractedData } from "@/lib/db/schema";
 import type { ExtractedBusinessInfo } from "@/lib/server/interview/schema";
 import { recomputeGaps, shouldRecomputeGaps } from "@/lib/server/gap/recompute";
+import { pruneResolvedMissingGaps } from "@/lib/server/gap/resolve";
 import { detectCautionFlagsForExtracted } from "./cautions";
 import { extractBusinessInfo } from "./extract";
 import { streamAdaptiveQuestion } from "./followup";
 import { formatGapCueAsGuide, loadGapCues, pickUnmatchedGapCues } from "./gapCues";
 import {
+  applyAskLimit,
   computeNodeCoverage,
+  countNodeAsks,
   formatNodeCoverageAsGuide,
+  getMainFlowNodes,
   shouldBoostIncidents,
 } from "./nodeCoverage";
 import { buildInterviewProgress, type InterviewProgress } from "./progress";
@@ -79,10 +83,24 @@ export async function handleUserTurnStreaming(params: {
   const conversationForLlm: ConversationMessage[] = conversation
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+  // UX1: 標準フロー本筋ノード一覧を抽出 LLM に渡し、Dice 係数では拾えない
+  // (複数 steps に分割された/同義語で言い換えられた) カバー済みノードを判定させる。
+  const mainNodes = await getMainFlowNodes(session.taskSlug ?? "");
   const llmExtracted = await extractBusinessInfo({
     conversation: conversationForLlm,
     current: session.extractedData,
+    mainNodes: mainNodes.map((n) => ({ id: n.id, label: n.label })),
   });
+  // ラチェット: LLM が今回言い忘れても、前回までに確認済みの id は失われない (union のみ、縮小しない)。
+  // mainNodes に実在しない id (LLM の書式ミス・幻覚) は union する前に弾く。ラチェットは
+  // 一度入った id を二度と外さない仕組みなので、無効な id が紛れ込むと恒久的に残ってしまう。
+  const validNodeIds = new Set(mainNodes.map((n) => n.id));
+  const confirmedNodeIds = Array.from(
+    new Set([
+      ...(session.extractedData.confirmedNodeIds ?? []),
+      ...(llmExtracted.confirmedNodeIds ?? []),
+    ]),
+  ).filter((id) => validNodeIds.has(id));
   // LLM は connections / exceptions / incidents まで抽出する (B2)。
   // gaps は C1 (既知ギャップ照合) で埋める。matchedKnownGap 付きで蓄積。
   // cautionFlags は B4 の後処理で常に再計算する。
@@ -107,11 +125,24 @@ export async function handleUserTurnStreaming(params: {
     ...llmExtracted,
     gaps,
     cautionFlags,
+    confirmedNodeIds,
   };
 
   // 3. スロット駆動で次の発話を決定
-  // UX1: 標準フロー本筋ノードの被覆状況 (LLM 非依存、毎ターン軽量に計算)
-  const nodeCoverage = await computeNodeCoverage(session.taskSlug, updatedExtracted.steps);
+  // UX1: 標準フロー本筋ノードの被覆状況 (Dice 係数 + confirmedNodeIds の LLM 判定を併用)
+  const rawNodeCoverage = await computeNodeCoverage(
+    session.taskSlug,
+    updatedExtracted.steps,
+    new Set(confirmedNodeIds),
+  );
+  // サーキットブレーカー: meta.targetNode で「これまで何回このノードを狙い撃ちしたか」を数え、
+  // NODE_ASK_LIMIT 回を超えても解決しないノードは以後の質問対象・分母から除外する
+  // (issue: 同じノードを延々と聞き続けて詰まるセッションの安全網)。
+  const askCounts = countNodeAsks(conversation);
+  const nodeCoverage = rawNodeCoverage ? applyAskLimit(rawNodeCoverage, askCounts) : null;
+  // 「不足」ギャップの自動解消: 対象ノードが confirmed になったら一覧から消す
+  // (issue: ユーザーがチャット/モーダルで回答してもギャップバッジが消えず残り続ける問題)。
+  updatedExtracted.gaps = pruneResolvedMissingGaps(updatedExtracted.gaps, nodeCoverage);
 
   const reachedMax = nextTurnCount >= MAX_TURNS;
   const finished = isFinished(updatedExtracted, nextTurnCount, nodeCoverage);
@@ -185,7 +216,11 @@ export async function handleUserTurnStreaming(params: {
         conversation: conversationForLlm,
         extracted: updatedExtracted,
         taskSlug: session.taskSlug,
-        nodeCoverage,
+        // 選ばれたスロットが "steps" のときだけ nodeCoverage を渡す。
+        // 常に渡すと、purpose/legalBasis/stakeholders 等 他スロットが選ばれても
+        // followup.ts の「未確認ステップ最優先」文脈に引っ張られ、guideQuestion が
+        // 無視されてしまう (issue: 必須項目が taskName 以外いつまでも埋まらない)。
+        nodeCoverage: slot === "steps" ? nodeCoverage : null,
         onDelta: onQuestionDelta,
       });
       nextContent = followup.content;
@@ -243,9 +278,12 @@ export async function handleUserTurnStreaming(params: {
  * handleUserTurnStreaming が needsGapRecompute=true を返したときに、
  * message 送出後（応答表示のクリティカルパスの外）で呼ぶ。
  *
- * 競合対策: 呼び出し時点の session スナップショットを使い回さず DB を再読込し、
+ * 競合対策: 呼び出し時点の session スナップショットを使い回さず DB を再読込し (latest)、
  * gaps/cautionFlags 以外のフィールドは再読込した最新値をそのまま引き継ぐ（部分マージ）。
- * これにより、この処理が走っている間に次ターンが別フィールドを更新していても上書きしない。
+ * さらに、gaps 計算 (LLM 呼び出し、数秒かかりうる) が終わった直後にもう一度読み直し (freshest)、
+ * 書き込みは freshest をベースにマージする。latest のままだと、この処理の実行中に次ターンが
+ * commit した内容 (新しい steps/confirmedNodeIds 等) を丸ごと巻き戻してしまう窓が数秒間開く。
+ * (完全な競合排除ではない — 再読込〜書き込みの間の短い窓は残るが、実用上十分に狭める)。
  */
 export async function recomputeDeferredGaps(
   ctx: DeferredGapContext,
@@ -256,12 +294,16 @@ export async function recomputeDeferredGaps(
   });
   if (!latest) return null;
 
+  // confirmedNodeIds は llmExtracted (このターンの抽出生値、ラチェット前) ではなく、
+  // per-turn の commit 後に再読込した latest.extractedData (ラチェット済み) を使う。
+  // recomputeGaps がこの extracted.steps/confirmedNodeIds を使って missing gap の自動解消も行う。
   const gaps = await recomputeGaps({
     slug,
     extracted: {
       ...llmExtracted,
       gaps: latest.extractedData.gaps,
       cautionFlags: [],
+      confirmedNodeIds: latest.extractedData.confirmedNodeIds,
     },
     conversation: conversationForLlm,
   });
@@ -271,8 +313,15 @@ export async function recomputeDeferredGaps(
     cautionFlags: [],
   });
 
+  // 書き込み直前にもう一度読み直す: ここまでの LLM 呼び出し (数秒) の間に次ターンが
+  // commit している可能性があるため、その場合は最初の latest ではなく最新スナップショットに
+  // gaps/cautionFlags だけをマージする (それ以外のフィールドを巻き戻さない)。
+  const freshest = await db.query.sessions.findFirst({
+    where: eq(sessions.id, sessionId),
+  });
+  if (!freshest) return null;
   const mergedExtracted: SessionExtractedData = {
-    ...latest.extractedData,
+    ...freshest.extractedData,
     gaps,
     cautionFlags,
   };

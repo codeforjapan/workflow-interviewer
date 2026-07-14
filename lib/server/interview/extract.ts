@@ -40,17 +40,38 @@ exceptions（例外フロー）:
 incidents（過去のヒヤリハット/ミス）:
 - 「過去に〜があった」「ミスしやすいのは〜」「危うく〜だった」等の発話を抽出
 - id は "i1", "i2", ... 、relatedStepId はあれば該当 step を指す（無ければ null）
-- severity (low/medium/high) を語りの強さから推定。明示なしでも medium をデフォルト`;
+- severity (low/medium/high) を語りの強さから推定。明示なしでも medium をデフォルト
+
+confirmedNodeIds（標準フロー本筋ノードのうち、実務でカバーされていると判断できるものの id）:
+- 下記「標準フロー本筋ノード一覧」が渡された場合のみ判定する。渡されなければ常に [] を返す
+- 会話全体（複数ターン・複数 steps にまたがってもよい）を踏まえ、そのノードの内容が実務で
+  行われている/説明されたと言えるなら id を含める。1つの steps だけで完結している必要はない
+  （例: 「見積書を作る」step と「Slackで承認を得てPDFで提示する」step の2つを合わせて
+  「見積・提案の提示」ノードをカバーしていると判断してよい）
+- 表現が標準フローのラベルと一字一句一致しなくても、同義・言い換えであれば含めてよい
+- 逆に、会話で明示的に触れられていないノードは含めない（推測禁止）
+- 一度含めた id は今後の統合でも保持する（前回の抽出データに含まれる confirmedNodeIds は
+  基本的にそのまま残し、新たに確認できたものだけ追加する）`;
 
 type Message = { role: "user" | "assistant"; content: string };
+type MainFlowNodeRef = { id: string; label: string };
+
+function buildMainFlowNodesSection(mainNodes: MainFlowNodeRef[] | undefined): string {
+  if (!mainNodes || mainNodes.length === 0) return "";
+  const lines = mainNodes.map((n) => `- ${n.id}: ${n.label}`).join("\n");
+  return `\n\n標準フロー本筋ノード一覧 (confirmedNodeIds の判定対象):\n${lines}`;
+}
 
 export async function extractBusinessInfo(params: {
   conversation: Message[];
   current: ExtractedBusinessInfo;
+  /** UX1追加: 標準フロー本筋ノード一覧。渡されない/空のときは confirmedNodeIds は常に []。 */
+  mainNodes?: MainFlowNodeRef[];
 }): Promise<ExtractedBusinessInfo> {
   const conversationText = params.conversation
     .map((m) => `${m.role === "user" ? "職員" : "AI"}: ${m.content}`)
     .join("\n");
+  const mainNodesSection = buildMainFlowNodesSection(params.mainNodes);
 
   const completion = await openai.chat.completions.parse({
     model: MODELS.extract,
@@ -58,7 +79,7 @@ export async function extractBusinessInfo(params: {
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "user",
-        content: `現在の抽出データ (JSON):\n${JSON.stringify(params.current)}\n\n会話履歴:\n${conversationText}\n\n統合後の抽出データを返してください。`,
+        content: `現在の抽出データ (JSON):\n${JSON.stringify(params.current)}\n\n会話履歴:\n${conversationText}${mainNodesSection}\n\n統合後の抽出データを返してください。`,
       },
     ],
     response_format: zodResponseFormat(ExtractedBusinessInfoSchema, "business_info"),

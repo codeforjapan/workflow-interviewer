@@ -21,6 +21,7 @@ const EMPTY: SessionExtractedData = {
   gaps: [],
   incidents: [],
   cautionFlags: [],
+  confirmedNodeIds: [],
 };
 
 function withSteps(n: number) {
@@ -175,6 +176,39 @@ async function main() {
     assert(matchCalls === 0 && diffCalls === 0, "no matcher should be called for empty slug");
     assert(result === extracted.gaps, "extracted.gaps should be returned as-is");
     console.log("  empty slug pass-through ✓");
+  }
+
+  // 5) recomputeGaps は自身の中で pruneResolvedMissingGaps を適用する。diffMatcher (C2) が
+  // 独立に "missing" を返しても、nodeCoverage (confirmedNodeIds) 側が既に確認済みと
+  // 判断しているノードなら、最終結果からは除かれる。
+  // (issue: /complete と /gap-recompute API が recomputeGaps を直接呼ぶだけで、
+  //  この pruning を一切適用していなかった)。
+  {
+    const extracted: SessionExtractedData = {
+      ...EMPTY,
+      steps: withSteps(5),
+      confirmedNodeIds: ["block-1/End"],
+    };
+    const result = await recomputeGaps(
+      { slug: "sonota", extracted, conversation: [] },
+      {
+        matchMatcher: async () => [],
+        diffMatcher: async () => [
+          {
+            kind: "missing",
+            standard_node_id: "block-1/End",
+            extracted_step_id: null,
+            severity: "medium",
+            reason: "終了 / ペンディングが抽出 steps に見当たらない",
+          },
+        ],
+      },
+    );
+    assert(
+      !result.some((g) => g.kind === "missing" && g.standardStepRef === "block-1/End"),
+      "missing gap for an already-confirmed node should be pruned by recomputeGaps itself",
+    );
+    console.log("  recomputeGaps prunes missing gaps for confirmedNodeIds-covered nodes ✓");
   }
 
   console.log("PASS");

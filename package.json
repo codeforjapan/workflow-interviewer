@@ -20,6 +20,7 @@
     "check:gap-match": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-match.ts",
     "check:gap-diff": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-diff.ts",
     "check:gap-recompute": "node --env-file-if-exists=.env.local --import tsx scripts/check-gap-recompute.ts",
+    "check:gap-resolve": "tsx scripts/check-gap-resolve.ts",
     "check:workflows": "tsx scripts/check-workflows.ts",
     "check:flow-graph": "tsx scripts/check-flow-graph.ts",
     "check:export": "tsx scripts/check-export.ts",

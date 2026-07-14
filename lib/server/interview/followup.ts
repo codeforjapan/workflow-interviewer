@@ -180,7 +180,9 @@ export async function streamAdaptiveQuestion(
  */
 function buildNodeCoverageSection(nodeCoverage: NodeCoverageResult | null | undefined): string {
   if (!nodeCoverage || nodeCoverage.totalNodes === 0) return "";
-  const unconfirmed = nodeCoverage.items.filter((i) => i.status === "unconfirmed");
+  // skipped (サーキットブレーカーで諦めたノード) は status が unconfirmed のままだが、
+  // ここに残すと「優先して確認する」リストが、まさに聞くのをやめたノードを LLM に指し戻してしまう。
+  const unconfirmed = nodeCoverage.items.filter((i) => i.status === "unconfirmed" && !i.skipped);
   if (unconfirmed.length === 0) return "";
   const lines = unconfirmed
     .slice(0, 8)
@@ -260,8 +262,12 @@ function buildSystemPrompt(taskSlug?: string | null): string {
 次に聞くべき質問を1つだけ生成してください。
 
 質問本文のルール:
+- 「参考ガイド質問」が今回聞くべき質問の主旨。これを別の話題にすり替えず、自然な言い回しに具体化する
+  (guideQuestion が purpose/legalBasis/stakeholders 等の質問であれば、その話題のまま具体化すること。
+  未確認の標準フロー本筋ステップがあっても、guideQuestion の主旨と違う話題に脱線してはならない)
 - 標準フローや docs/workflow 抜粋の文脈に沿った具体化を優先する
-- 標準フロー主要ステップがまだ未確認の間は、その確認を最優先し、周辺的な詳細（担保・例外・過去のミス等）を深追いしない
+- 「標準フロー主要ステップの確認状況」セクションが渡されているときに限り、そこに挙げた未確認ステップの
+  確認を周辺的な詳細（担保・例外・過去のミス等）より優先する
 - 推測や断定はしない
 - 1文・120文字以内
 - 回答者が答えやすい自然な口調

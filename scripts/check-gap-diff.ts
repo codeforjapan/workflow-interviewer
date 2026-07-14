@@ -4,6 +4,7 @@ import {
   diffStandardVsExtracted,
   flattenStandardNodes,
   mergeFindings,
+  type DiffMatcher,
 } from "@/lib/server/gap/diff";
 
 function assert(cond: boolean, msg: string): asserts cond {
@@ -21,6 +22,7 @@ const EMPTY: SessionExtractedData = {
   gaps: [],
   incidents: [],
   cautionFlags: [],
+  confirmedNodeIds: [],
 };
 
 function withSteps(labels: string[]) {
@@ -285,6 +287,37 @@ async function main() {
       `unexpected kinds: ${kinds.join(",")}`,
     );
     console.log("  diffStandardVsExtracted E2E ✓");
+  }
+
+  // 7b) exceptions が matcher に渡される (issue: 「決裁が通らない場合は終了」のような早期終了
+  // exception があっても steps だけを見て "missing" と誤判定していたバグの回帰確認)。
+  {
+    const extracted: SessionExtractedData = {
+      ...EMPTY,
+      steps: withSteps(["申請者の本人確認", "印鑑を受領", "システムに登録"]),
+      exceptions: [
+        {
+          id: "e1",
+          relatedStepId: "s1",
+          label: "本人確認できず却下",
+          condition: "身分証不備の場合",
+          frequency: null,
+        },
+      ],
+    };
+    let receivedExceptions: SessionExtractedData["exceptions"] | undefined;
+    const matcher: DiffMatcher = async (_nodes, _steps, exceptions) => {
+      receivedExceptions = exceptions;
+      return [];
+    };
+    await diffStandardVsExtracted({ slug: "inkan-toroku", extracted }, matcher);
+    assert(receivedExceptions !== undefined, "matcher should have been called");
+    const got = receivedExceptions as SessionExtractedData["exceptions"];
+    assert(
+      got.length === 1 && got[0].id === "e1",
+      `expected exceptions to be passed through to the matcher, got ${JSON.stringify(got)}`,
+    );
+    console.log("  exceptions passed to diff matcher ✓");
   }
 
   // 8) steps が少ない / slug 空 / 不存在 / matcher 失敗 のときは既存 gaps をパススルー

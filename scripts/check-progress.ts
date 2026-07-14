@@ -1,5 +1,5 @@
 import type { SessionExtractedData } from "@/lib/db/schema";
-import type { NodeCoverageResult } from "@/lib/server/interview/nodeCoverage";
+import { getMainFlowNodes, type NodeCoverageResult } from "@/lib/server/interview/nodeCoverage";
 import { buildInterviewProgress, computeInterviewProgress } from "@/lib/server/interview/progress";
 import { MIN_TURNS_BEFORE_FINISH, SLOT_DEFS } from "@/lib/server/interview/slots";
 
@@ -18,6 +18,7 @@ const EMPTY: SessionExtractedData = {
   gaps: [],
   incidents: [],
   cautionFlags: [],
+  confirmedNodeIds: [],
 };
 
 function withSteps(n: number): SessionExtractedData["steps"] {
@@ -114,6 +115,7 @@ async function main() {
       extracted: FILLED,
       turnCount: 6,
       taskSlug: "inkan-toroku",
+      messages: [],
     });
     assert(known.nodeCoverage !== null, "inkan-toroku should yield a non-null nodeCoverage");
     assert(known.nodeCoverage!.totalNodes > 0, "inkan-toroku nodeCoverage should have >0 total nodes");
@@ -125,12 +127,50 @@ async function main() {
       extracted: FILLED,
       turnCount: 6,
       taskSlug: "not-a-real-slug",
+      messages: [],
     });
     assert(unknown.nodeCoverage === null, "unknown slug should yield null nodeCoverage, not throw");
     // フォールバック: nodeCoverage が無い場合は本数ベース判定 (steps>=6 -> completeness=1)
     const stepsSlot = unknown.requiredSlots.find((s) => s.key === "steps");
     assert(stepsSlot!.completeness === 1, "fallback (no nodeCoverage) should use count-based completeness");
     console.log("  case#8 unknown slug -> nodeCoverage null, no throw, count-based fallback ✓");
+  }
+
+  // Case 9: computeInterviewProgress は渡された messages からサーキットブレーカー (applyAskLimit)
+  // を適用する (issue: 以前はターン処理中の per-turn パスにしかこれが無く、ページ再読み込み後の
+  // coverageRatio/readyToFinish がターン内表示と食い違っていた)。
+  {
+    const nodes = await getMainFlowNodes("inkan-toroku");
+    const target = nodes[0];
+    const askedTwice = [
+      {
+        role: "assistant",
+        meta: { targetNode: { kind: "standard" as const, nodeId: target.id, rawId: target.rawId, blockIndex: 0 } },
+      },
+      {
+        role: "assistant",
+        meta: { targetNode: { kind: "standard" as const, nodeId: target.id, rawId: target.rawId, blockIndex: 0 } },
+      },
+    ];
+    const withAskLimit = await computeInterviewProgress({
+      extracted: FILLED,
+      turnCount: 6,
+      taskSlug: "inkan-toroku",
+      messages: askedTwice,
+    });
+    const withoutAskLimit = await computeInterviewProgress({
+      extracted: FILLED,
+      turnCount: 6,
+      taskSlug: "inkan-toroku",
+      messages: [],
+    });
+    assert(
+      withAskLimit.nodeCoverage!.totalNodes === withoutAskLimit.nodeCoverage!.totalNodes - 1,
+      `expected ask-limited node excluded from totalNodes (${withAskLimit.nodeCoverage!.totalNodes} vs ${withoutAskLimit.nodeCoverage!.totalNodes})`,
+    );
+    const skippedItem = withAskLimit.nodeCoverage!.items.find((i) => i.nodeId === target.id);
+    assert(skippedItem?.skipped === true, "targeted node should be marked skipped after 2 prior asks");
+    console.log("  case#9 computeInterviewProgress applies ask-limit circuit breaker from messages ✓");
   }
 
   console.log("PASS");

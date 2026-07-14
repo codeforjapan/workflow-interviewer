@@ -5,7 +5,7 @@ import {
   type ForkGroup,
   type StandardNodeRef,
 } from "@/lib/kb/standardNodes";
-import type { SessionExtractedData } from "@/lib/db/schema";
+import type { MessageMeta, SessionExtractedData } from "@/lib/db/schema";
 import { isMinimumFilled } from "./slots";
 
 /**
@@ -21,9 +21,23 @@ export type NodeCoverageItem = {
    *  (UX6: フロント側でどの mermaid ブロックをハイライトするか特定するために使う)。 */
   blockIndex: number;
   status: "confirmed" | "unconfirmed";
-  /** 確認済みなら根拠となった steps[].id (最高スコアの1件)。 */
+  /** 確認済みなら根拠となった steps[].id (最高スコアの1件)。LLM 判定 (source: "llm") では null。 */
   matchedStepId: string | null;
   score: number;
+  /**
+   * 確認済みの根拠。
+   * - "dice": steps 単体と本ノードラベルの Dice 係数が閾値以上
+   * - "llm": extract.ts の confirmedNodeIds (会話全体からの LLM 判定、複数 steps の組合せもカバー)
+   * - "fork-group": OR fork-group の他メンバーが確認済みだったための波及確認
+   * 未確認 (unconfirmed) では undefined。
+   */
+  source?: "dice" | "llm" | "fork-group";
+  /**
+   * サーキットブレーカーにより「これ以上聞かない」と判断されたノード。
+   * true の場合、coverageRatio/totalNodes/nextUnconfirmed の対象から除外される
+   * (unconfirmed のまま = 未解決だが、質問対象にも完了判定の分母にも含めない)。
+   */
+  skipped?: boolean;
 };
 
 export type NodeCoverageResult = {
@@ -47,7 +61,10 @@ export const NODE_MATCH_THRESHOLD = 0.3;
 // 抽出 steps の自然文 ("評価額を計算する") はひらがなの助詞を含むが、
 // mermaid ノードラベル ("評価額計算") は体言止めの複合語であるため、
 // ひらがなを落とすことで両者の表記ゆれを吸収する。
-const KEEP_CHARS_RE = /[一-鿿㐀-䶿゠-ヿA-Za-z0-9]/g;
+// カタカナ範囲 (U+30A0-U+30FF) には中点 U+30FB (・) も含まれるが、これは語の区切り記号であり
+// 「見積・提案の提示」のようなラベルでノイズ bigram (積・/・提) を生みスコアを不当に下げるため
+// U+30FB だけを範囲から抜く (前後を ヺ と ー で明示的に分割)。
+const KEEP_CHARS_RE = /[一-鿿㐀-䶿゠-ヺー-ヿA-Za-z0-9]/g;
 
 function condense(text: string): string {
   const matches = text.normalize("NFKC").match(KEEP_CHARS_RE);
@@ -72,10 +89,16 @@ export function scoreStepAgainstNode(stepLabel: string, nodeLabel: string): numb
   return diceCoefficient(bigrams(condense(stepLabel)), bigrams(condense(nodeLabel)));
 }
 
-/** mainNodes と steps を全組合せ照合し、ノード単位の結果配列を返す (KB宣言順)。 */
+/**
+ * mainNodes と steps を全組合せ照合し、ノード単位の結果配列を返す (KB宣言順)。
+ * confirmedNodeIds (extract.ts の LLM 判定、コントローラ側でラチェット済み) が渡された場合、
+ * Dice 係数が閾値未満でもそちらを優先的な確認根拠として採用する
+ * (1ノードの内容が複数 steps に分割/言い換えられていて Dice では拾えないケースを補う)。
+ */
 export function matchStepsToNodes(
   mainNodes: StandardNodeRef[],
   steps: SessionExtractedData["steps"],
+  confirmedNodeIds?: ReadonlySet<string>,
 ): NodeCoverageItem[] {
   return mainNodes.map((node) => {
     let bestScore = 0;
@@ -87,7 +110,9 @@ export function matchStepsToNodes(
         bestStepId = step.id;
       }
     }
-    const confirmed = bestScore >= NODE_MATCH_THRESHOLD;
+    const diceConfirmed = bestScore >= NODE_MATCH_THRESHOLD;
+    const llmConfirmed = !diceConfirmed && (confirmedNodeIds?.has(node.id) ?? false);
+    const confirmed = diceConfirmed || llmConfirmed;
     return {
       nodeId: node.id,
       rawId: node.rawId,
@@ -95,8 +120,9 @@ export function matchStepsToNodes(
       subgraph: node.subgraph,
       blockIndex: node.blockIndex,
       status: confirmed ? "confirmed" : "unconfirmed",
-      matchedStepId: confirmed ? bestStepId : null,
+      matchedStepId: diceConfirmed ? bestStepId : null,
       score: bestScore,
+      source: diceConfirmed ? "dice" : llmConfirmed ? "llm" : undefined,
     };
   });
 }
@@ -142,6 +168,7 @@ function applyForkGroupOverrides(
         member.status = "confirmed";
         member.matchedStepId = confirmed.matchedStepId;
         member.score = confirmed.score;
+        member.source = "fork-group";
       }
     }
   }
@@ -193,15 +220,17 @@ export async function getForkGroups(slug: string): Promise<ForkGroup[]> {
 /**
  * slug + steps から本筋ノードの被覆状況を計算する。
  * slug が空 / KB 不在 / 追跡対象ノードが0件 のときは null (呼び出し側は既存挙動にフォールバックする)。
+ * confirmedNodeIds: extract.ts の LLM 判定 (コントローラ側でラチェット済み)。省略時は Dice のみ。
  */
 export async function computeNodeCoverage(
   slug: string | null | undefined,
   steps: SessionExtractedData["steps"],
+  confirmedNodeIds?: ReadonlySet<string>,
 ): Promise<NodeCoverageResult | null> {
   if (!slug) return null;
   const mainNodes = await getMainFlowNodes(slug);
   if (mainNodes.length === 0) return null;
-  const items = matchStepsToNodes(mainNodes, steps);
+  const items = matchStepsToNodes(mainNodes, steps, confirmedNodeIds);
   const forkGroups = await getForkGroups(slug);
   applyForkGroupOverrides(items, forkGroups);
   const confirmedNodes = items.filter((i) => i.status === "confirmed").length;
@@ -212,6 +241,57 @@ export async function computeNodeCoverage(
     coverageRatio: confirmedNodes / items.length,
     items,
     nextUnconfirmed: items.find((i) => i.status === "unconfirmed") ?? null,
+  };
+}
+
+/**
+ * 同一ノードを何度質問しても Dice/LLM いずれでも確認できない場合の安全網 (サーキットブレーカー)。
+ * askCounts (nodeId -> このターン以前に質問対象にした回数) が NODE_ASK_LIMIT 以上のまま
+ * unconfirmed なノードは、以後 nextUnconfirmed の選択対象・coverageRatio の分母から除外する
+ * (skipped=true。isFinished/coverageRatio がこの1ノードだけで永遠に頭打ちにならないようにする)。
+ * 「本当にこの組織では使っていない/該当しない」可能性が高いノードを、無限に聞き続けない。
+ */
+export const NODE_ASK_LIMIT = 2;
+
+/**
+ * メッセージ履歴 (assistant の meta.targetNode) から、ノードごとに何回質問対象にしたかを数える。
+ * controller.ts (ターン処理中) と progress.ts (ページ表示時の再計算) の両方で使う共通ヘルパ。
+ * 両者で別々に数えると applyAskLimit の判定がずれ、ターン内の進捗とページ再読み込み後の
+ * 進捗表示が食い違ってしまう。
+ */
+export function countNodeAsks(
+  messages: ReadonlyArray<{ role: string; meta?: MessageMeta | null }>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const m of messages) {
+    if (m.role !== "assistant") continue;
+    const nodeId = m.meta?.targetNode?.nodeId;
+    if (nodeId) counts.set(nodeId, (counts.get(nodeId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export function applyAskLimit(
+  nodeCoverage: NodeCoverageResult,
+  askCounts: ReadonlyMap<string, number>,
+  limit: number = NODE_ASK_LIMIT,
+): NodeCoverageResult {
+  if (askCounts.size === 0) return nodeCoverage;
+  const items = nodeCoverage.items.map((item) => {
+    if (item.status === "unconfirmed" && (askCounts.get(item.nodeId) ?? 0) >= limit) {
+      return { ...item, skipped: true };
+    }
+    return item;
+  });
+  const effective = items.filter((i) => !i.skipped);
+  const confirmedNodes = effective.filter((i) => i.status === "confirmed").length;
+  return {
+    ...nodeCoverage,
+    items,
+    totalNodes: effective.length,
+    confirmedNodes,
+    coverageRatio: effective.length === 0 ? 1 : confirmedNodes / effective.length,
+    nextUnconfirmed: items.find((i) => i.status === "unconfirmed" && !i.skipped) ?? null,
   };
 }
 
