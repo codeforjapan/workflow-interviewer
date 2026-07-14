@@ -38,6 +38,8 @@ export const MermaidNodeSchema = z.object({
   id: z.string(),
   label: z.string(),
   shape: z.enum(["rect", "stadium", "diamond"]),
+  /** mermaid の `:::className` サフィックス (例: "cond", "condOr", "milestone")。無ければ null。 */
+  className: z.string().nullable(),
 });
 
 export type MermaidNode = z.infer<typeof MermaidNodeSchema>;

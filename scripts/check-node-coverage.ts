@@ -69,17 +69,41 @@ async function main() {
     console.log("  case#3 inkan-toroku -> 14 nodes, block-2 excluded ✓");
   }
 
-  // 4) sonota: classDef サフィックス等でプレースホルダ化した7ノードが除外される
+  // 4) sonota: `:::className` サフィックスも正しくパースされ、real な diamond/milestone ノードが
+  // 追跡対象に含まれる (以前はパーサーのバグで C/F/G/H/K/N/O が丸ごと消えていた)。
+  // 唯一 G (`:::condOr` の fork-group 分岐元) だけは、分岐先 G1/G2/G3 側で個別に追跡するため除外する。
   {
     const nodes = await getMainFlowNodes("sonota");
-    assert(nodes.length === 14, `sonota should have 14 nodes, got ${nodes.length}`);
-    for (const placeholder of ["C", "F", "G", "H", "K", "N", "O"]) {
+    assert(nodes.length === 21, `sonota should have 21 nodes, got ${nodes.length}`);
+    assert(!nodes.some((n) => n.rawId === "G"), "sonota condOr fork-source G should be excluded");
+    for (const included of ["C", "F", "H", "K", "N", "O", "P", "G1", "G2", "G3"]) {
       assert(
-        !nodes.some((n) => n.rawId === placeholder),
-        `sonota placeholder node ${placeholder} should be excluded`,
+        nodes.some((n) => n.rawId === included),
+        `sonota node ${included} should be trackable (was silently dropped by the classDef parser bug)`,
       );
     }
-    console.log("  case#4 sonota -> 14 nodes, placeholder nodes excluded ✓");
+    console.log("  case#4 sonota -> 21 nodes, condOr source G excluded, real diamonds/milestones included ✓");
+  }
+
+  // 4b) sonota OR fork-group: 社内承認ルート (G1 Slack / G2 board / G3 その他) は排他的な代替パス。
+  // どれか1つが実務で確認できれば、残りは「言及されなかった」だけで未確認のまま聞き続けない。
+  {
+    const steps = withSteps([
+      "受注が決まったら担当者がSlackのチャンネルで共有し、上長が確認して承認する",
+    ]);
+    const result = await computeNodeCoverage("sonota", steps);
+    assert(result !== null, "expected non-null result for sonota");
+    const byRawId = new Map(result!.items.map((i) => [i.rawId, i]));
+    assert(byRawId.get("G1")?.status === "confirmed", "G1 (Slack) should be confirmed by the matching step");
+    assert(
+      byRawId.get("G2")?.status === "confirmed",
+      "G2 (board) should be confirmed via OR fork-group override even though never mentioned",
+    );
+    assert(
+      byRawId.get("G3")?.status === "confirmed",
+      "G3 (その他) should be confirmed via OR fork-group override even though never mentioned",
+    );
+    console.log("  case#4b sonota OR fork-group (G1/G2/G3) confirms as a group ✓");
   }
 
   // 5) scoreStepAgainstNode: 真陽性は 0.5 以上、抵当権の枝葉フレーズは大きく下回る

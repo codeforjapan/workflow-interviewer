@@ -19,6 +19,10 @@ const STADIUM_NODE = new RegExp(`^(${ID})\\(\\[([^\\]]+)\\]\\)$`);
 const DIAMOND_NODE = new RegExp(`^(${ID})\\{([^}]+)\\}$`);
 const RECT_NODE = new RegExp(`^(${ID})\\[([^\\]]+)\\]$`);
 const BARE_ID = new RegExp(`^(${ID})$`);
+// mermaid の `:::className` サフィックス (例: `G{社内承認ルート}:::condOr`)。
+// 先に切り離してから形状判定する — 付いたまま渡すと上の形状正規表現が $ アンカーで一致しなくなり、
+// ノードごと静かに消える (以前の挙動)。
+const CLASS_SUFFIX = new RegExp(`^(.*):::(${ID})$`);
 
 type SubgraphFrame = {
   title: string;
@@ -59,24 +63,31 @@ function trackInSubgraph(state: ParseState, id: string) {
 }
 
 function parseNodeRef(state: ParseState, raw: string): string | null {
-  const text = raw.trim();
+  let text = raw.trim();
   if (!text) return null;
+
+  let className: string | null = null;
+  const classMatch = text.match(CLASS_SUFFIX);
+  if (classMatch) {
+    text = classMatch[1].trim();
+    className = classMatch[2];
+  }
 
   let m = text.match(STADIUM_NODE);
   if (m) {
-    registerNode(state, { id: m[1], label: m[2], shape: "stadium" }, false);
+    registerNode(state, { id: m[1], label: m[2], shape: "stadium", className }, false);
     trackInSubgraph(state, m[1]);
     return m[1];
   }
   m = text.match(DIAMOND_NODE);
   if (m) {
-    registerNode(state, { id: m[1], label: m[2], shape: "diamond" }, false);
+    registerNode(state, { id: m[1], label: m[2], shape: "diamond", className }, false);
     trackInSubgraph(state, m[1]);
     return m[1];
   }
   m = text.match(RECT_NODE);
   if (m) {
-    registerNode(state, { id: m[1], label: m[2], shape: "rect" }, false);
+    registerNode(state, { id: m[1], label: m[2], shape: "rect", className }, false);
     trackInSubgraph(state, m[1]);
     return m[1];
   }
@@ -84,7 +95,7 @@ function parseNodeRef(state: ParseState, raw: string): string | null {
   if (m) {
     registerNode(
       state,
-      { id: m[1], label: m[1], shape: "rect" },
+      { id: m[1], label: m[1], shape: "rect", className },
       true,
     );
     trackInSubgraph(state, m[1]);

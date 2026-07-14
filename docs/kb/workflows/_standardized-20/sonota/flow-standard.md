@@ -23,6 +23,7 @@ graph TD
     %% スタイル定義
     classDef default fill:#ffffff,stroke:#333,stroke-width:1px;
     classDef cond fill:#fff,stroke:#333,stroke-dasharray: 5 5;
+    classDef condOr fill:#fff,stroke:#1976d2,stroke-dasharray: 5 5;
     classDef milestone fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
 
     %% 1. 相談・ヒアリングフェーズ
@@ -35,7 +36,9 @@ graph TD
     E --> F{発注の意思確認}:::cond
 
     %% 3. 社内稟議・承認フェーズ（中盤の並列処理）
-    F -- 受注確定 --> G{社内承認ルート}:::cond
+    %% 社内承認ルートは Slack/board/その他 のいずれか1つを使う排他的な代替パス (OR)。
+    %% 全部を必須にすると、実際には使われない経路が永遠に未確認のまま聞き続けられてしまう。
+    F -- 受注確定 --> G{社内承認ルート}:::condOr
     G --> G1[Slackでの共有・承認]
     G --> G2[boardでの見積・案件承認]
     G --> G3[その他社内確認]

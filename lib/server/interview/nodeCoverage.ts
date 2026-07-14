@@ -1,5 +1,10 @@
 import { loadWorkflowBySlug } from "@/lib/kb/loader";
-import { flattenStandardNodes, type StandardNodeRef } from "@/lib/kb/standardNodes";
+import {
+  computeForkGroups,
+  flattenStandardNodes,
+  type ForkGroup,
+  type StandardNodeRef,
+} from "@/lib/kb/standardNodes";
 import type { SessionExtractedData } from "@/lib/db/schema";
 import { isMinimumFilled } from "./slots";
 
@@ -100,16 +105,50 @@ export function matchStepsToNodes(
  * 追跡対象とする「本筋ノード」の絞り込み。
  * - blockIndex 0 (flow-standard.md 内の最初の mermaid ブロック) を本筋とみなす
  * - stadium 形状 (Start/End 境界マーカー) は実務ステップではないため除外
+ * - `:::condOr` (OR fork-group の分岐元) は分岐先 (memberIds) 側で個別に追跡されるため、
+ *   分岐元自体は独立したステップとして二重に要求しない (単なる分岐ラベルであり実務ステップではない)。
+ *   通常の diamond (Yes/No 判定など、例: kotei-shisan-zei の CheckZeroProp) は実務判断として
+ *   引き続き追跡対象に含める。
  * - label === rawId は mermaid パーサーが対応できない記法のプレースホルダなので除外
  */
 function isTrackableMainFlowNode(node: StandardNodeRef): boolean {
   if (node.blockIndex !== 0) return false;
   if (node.shape === "stadium") return false;
+  if (node.className === "condOr") return false;
   if (node.label === node.rawId) return false;
   return true;
 }
 
+/**
+ * OR グループ (fork-group) の判定を items に反映する。
+ * グループ内のいずれか1件でも confirmed なら、残りのメンバーも confirmed 扱いにする
+ * (排他的な代替パスなので、実際に使われなかった枝を永遠に未確認のまま聞き続けない)。
+ */
+function applyForkGroupOverrides(
+  items: NodeCoverageItem[],
+  groups: ForkGroup[],
+): void {
+  if (groups.length === 0) return;
+  const byId = new Map(items.map((item) => [item.nodeId, item]));
+  for (const group of groups) {
+    const members = group.memberIds
+      .map((id) => byId.get(id))
+      .filter((item): item is NodeCoverageItem => item != null);
+    if (members.length < 2) continue;
+    const confirmed = members.find((m) => m.status === "confirmed");
+    if (!confirmed) continue;
+    for (const member of members) {
+      if (member.status !== "confirmed") {
+        member.status = "confirmed";
+        member.matchedStepId = confirmed.matchedStepId;
+        member.score = confirmed.score;
+      }
+    }
+  }
+}
+
 const mainNodesCache = new Map<string, Promise<StandardNodeRef[]>>();
+const forkGroupsCache = new Map<string, Promise<ForkGroup[]>>();
 
 async function loadMainFlowNodesUncached(slug: string): Promise<StandardNodeRef[]> {
   let workflow;
@@ -131,6 +170,26 @@ export async function getMainFlowNodes(slug: string): Promise<StandardNodeRef[]>
   return promise;
 }
 
+async function loadForkGroupsUncached(slug: string): Promise<ForkGroup[]> {
+  let workflow;
+  try {
+    workflow = await loadWorkflowBySlug(slug);
+  } catch {
+    return [];
+  }
+  return computeForkGroups(workflow.flowStandard);
+}
+
+/** 対象業務スラッグの OR fork-group 一覧を返す。KB不在等は []。 */
+export async function getForkGroups(slug: string): Promise<ForkGroup[]> {
+  if (!slug) return [];
+  const cached = forkGroupsCache.get(slug);
+  if (cached) return cached;
+  const promise = loadForkGroupsUncached(slug);
+  forkGroupsCache.set(slug, promise);
+  return promise;
+}
+
 /**
  * slug + steps から本筋ノードの被覆状況を計算する。
  * slug が空 / KB 不在 / 追跡対象ノードが0件 のときは null (呼び出し側は既存挙動にフォールバックする)。
@@ -143,6 +202,8 @@ export async function computeNodeCoverage(
   const mainNodes = await getMainFlowNodes(slug);
   if (mainNodes.length === 0) return null;
   const items = matchStepsToNodes(mainNodes, steps);
+  const forkGroups = await getForkGroups(slug);
+  applyForkGroupOverrides(items, forkGroups);
   const confirmedNodes = items.filter((i) => i.status === "confirmed").length;
   return {
     slug,
@@ -166,6 +227,7 @@ export function formatNodeCoverageAsGuide(item: NodeCoverageItem): string {
 /** テスト用にキャッシュをリセットするヘルパ。 */
 export function _resetNodeCoverageCache() {
   mainNodesCache.clear();
+  forkGroupsCache.clear();
 }
 
 /**
