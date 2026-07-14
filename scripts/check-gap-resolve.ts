@@ -88,6 +88,66 @@ function main() {
     console.log("  case#3 null nodeCoverage -> pass-through, no throw ✓");
   }
 
+  // 4) askCounts 指定時: 一度も質問対象にしていない (＝会話がまだそこまで進んでいない) ノードの
+  // "missing" は隠す。質問はしたがまだ未確認 (＝答え損ねた/拾えなかった) ノードは表示したままにする。
+  // (issue: 「まだ聞かれてもいないのに不足と言われる」不親切な表示を区別する)
+  {
+    const gaps: ExtractedGap[] = [
+      {
+        id: "diff-missing-0",
+        kind: "missing",
+        standardStepRef: "block-1/E",
+        reason: "まだ一度も聞かれていないノード",
+      },
+      {
+        id: "diff-missing-1",
+        kind: "missing",
+        standardStepRef: "block-1/F",
+        reason: "聞かれたが未確認のノード",
+      },
+    ];
+    const nodeCoverage = coverage([
+      {
+        nodeId: "block-1/E",
+        rawId: "E",
+        label: "見積・提案の提示",
+        subgraph: null,
+        blockIndex: 0,
+        status: "unconfirmed",
+        matchedStepId: null,
+        score: 0,
+      },
+      {
+        nodeId: "block-1/F",
+        rawId: "F",
+        label: "発注の意思確認",
+        subgraph: null,
+        blockIndex: 0,
+        status: "unconfirmed",
+        matchedStepId: null,
+        score: 0,
+      },
+    ]);
+    // block-1/F だけ質問対象にした実績がある (block-1/E は一度も無い = askCounts に現れない)
+    const askCounts = new Map([["block-1/F", 1]]);
+    const pruned = pruneResolvedMissingGaps(gaps, nodeCoverage, askCounts);
+    assert(pruned.length === 1, `expected 1 remaining gap, got ${pruned.length}`);
+    assert(pruned[0].id === "diff-missing-1", "asked-but-unanswered node's gap should remain");
+    console.log("  case#4 askCounts hides never-asked nodes, keeps asked-but-unanswered ones ✓");
+  }
+
+  // 5) nodeCoverage.items に存在しないノード参照 (Start ノードへの集約 finding 等、既知の限界)
+  // は askCounts を渡していても判定できないためそのまま残す。
+  {
+    const gaps: ExtractedGap[] = [
+      { id: "diff-missing-0", kind: "missing", standardStepRef: "block-1/Start", reason: "flow全体が未確認" },
+    ];
+    const nodeCoverage = coverage([]);
+    const pruned = pruneResolvedMissingGaps(gaps, nodeCoverage, new Map());
+    assert(pruned.length === 1, "unrecognized standardStepRef should be left as-is");
+    console.log("  case#5 gaps referencing untracked nodes are left untouched ✓");
+  }
+
   console.log("PASS");
 }
 

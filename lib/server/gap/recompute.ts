@@ -20,6 +20,12 @@ export type RecomputeInput = {
   slug: string;
   extracted: SessionExtractedData;
   conversation: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+  /**
+   * ノードごとに何回質問対象にしたか (countNodeAsks 由来)。渡すと、一度も質問されていない
+   * ノードの "missing" ギャップを「まだ会話がそこまで進んでいない」として隠す
+   * (pruneResolvedMissingGaps 参照)。省略時はこの区別をしない (従来通り表示する)。
+   */
+  askCounts?: ReadonlyMap<string, number>;
 };
 
 export type RecomputeOverrides = {
@@ -67,5 +73,5 @@ export async function recomputeGaps(
     input.extracted.steps,
     new Set(input.extracted.confirmedNodeIds ?? []),
   );
-  return pruneResolvedMissingGaps(afterDiff, nodeCoverage);
+  return pruneResolvedMissingGaps(afterDiff, nodeCoverage, input.askCounts);
 }

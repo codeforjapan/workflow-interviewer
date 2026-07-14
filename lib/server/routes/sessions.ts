@@ -14,6 +14,7 @@ import {
 import { buildJsonReport } from "@/lib/server/export/json";
 import { buildMarkdownReport } from "@/lib/server/export/markdown";
 import { recomputeGaps } from "@/lib/server/gap/recompute";
+import { countNodeAsks } from "@/lib/server/interview/nodeCoverage";
 import { computeInterviewProgress } from "@/lib/server/interview/progress";
 import { questions } from "@/lib/server/interview/questions";
 import { getSlotTemplate, SLOT_DEFS } from "@/lib/server/interview/slots";
@@ -289,6 +290,7 @@ export const sessionsRoute = new Hono()
         slug: session.taskSlug ?? "",
         extracted: { ...session.extractedData, cautionFlags: [] },
         conversation: conversationForLlm,
+        askCounts: countNodeAsks(sessionMessages),
       });
       const cautionFlags = await detectCautionFlagsForExtracted({
         ...session.extractedData,
@@ -358,6 +360,9 @@ export const sessionsRoute = new Hono()
       const conversationForLlm = finalMessages
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+      // askCounts (「まだ聞かれていないノードは missing にしない」フィルタ) はあえて渡さない。
+      // ここはインタビュー終了時の最終レポート用の計算で、これ以上質問する機会はもう無いため、
+      // 聞かれたかどうかに関わらず未確認なものは全て最終的な gap として報告すべき。
       const gaps = await recomputeGaps({
         slug: session.taskSlug ?? "",
         extracted: { ...session.extractedData, cautionFlags: [] },

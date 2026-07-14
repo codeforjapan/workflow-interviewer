@@ -40,6 +40,7 @@ type DeferredGapContext = {
   slug: string;
   llmExtracted: ExtractedBusinessInfo;
   conversationForLlm: ConversationMessage[];
+  askCounts: ReadonlyMap<string, number>;
 };
 
 /**
@@ -142,7 +143,9 @@ export async function handleUserTurnStreaming(params: {
   const nodeCoverage = rawNodeCoverage ? applyAskLimit(rawNodeCoverage, askCounts) : null;
   // 「不足」ギャップの自動解消: 対象ノードが confirmed になったら一覧から消す
   // (issue: ユーザーがチャット/モーダルで回答してもギャップバッジが消えず残り続ける問題)。
-  updatedExtracted.gaps = pruneResolvedMissingGaps(updatedExtracted.gaps, nodeCoverage);
+  // askCounts も渡し、一度も質問されていないノードの "missing" は「まだ会話がそこまで
+  // 進んでいない」として隠す (issue: 未到達のノードまで「不足」と表示され不親切だった)。
+  updatedExtracted.gaps = pruneResolvedMissingGaps(updatedExtracted.gaps, nodeCoverage, askCounts);
 
   const reachedMax = nextTurnCount >= MAX_TURNS;
   const finished = isFinished(updatedExtracted, nextTurnCount, nodeCoverage);
@@ -269,7 +272,7 @@ export async function handleUserTurnStreaming(params: {
     progress,
     needsGapRecompute: refreshGaps,
     gapRecomputeContext: refreshGaps
-      ? { sessionId, slug: session.taskSlug ?? "", llmExtracted, conversationForLlm }
+      ? { sessionId, slug: session.taskSlug ?? "", llmExtracted, conversationForLlm, askCounts }
       : undefined,
   };
 }
@@ -288,7 +291,7 @@ export async function handleUserTurnStreaming(params: {
 export async function recomputeDeferredGaps(
   ctx: DeferredGapContext,
 ): Promise<typeof sessions.$inferSelect | null> {
-  const { sessionId, slug, llmExtracted, conversationForLlm } = ctx;
+  const { sessionId, slug, llmExtracted, conversationForLlm, askCounts } = ctx;
   const latest = await db.query.sessions.findFirst({
     where: eq(sessions.id, sessionId),
   });
@@ -306,6 +309,7 @@ export async function recomputeDeferredGaps(
       confirmedNodeIds: latest.extractedData.confirmedNodeIds,
     },
     conversation: conversationForLlm,
+    askCounts,
   });
   const cautionFlags = await detectCautionFlagsForExtracted({
     ...llmExtracted,
