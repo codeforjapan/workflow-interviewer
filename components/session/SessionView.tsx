@@ -55,6 +55,7 @@ export function SessionView({
   const flowSaveTimerRef = useRef<number | null>(null);
   const latestFlowLayoutRef = useRef<FlowLayout | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const wasSendingRef = useRef(false);
 
   const isFinished = session.status === "completed";
   // UX3: MAX_TURNS到達は絶対上限としての完了可否。progress.readyToFinish は
@@ -158,6 +159,15 @@ export function SessionView({
       }
     };
   }, []);
+
+  // ストリーミング応答 (sending: true -> false) が完了したら入力欄にオートフォーカスする。
+  // 初回マウント時 (sending は常に false スタート) には発火しないよう、直前の sending を ref で追う。
+  useEffect(() => {
+    if (wasSendingRef.current && !sending && !isFinished) {
+      chatInputRef.current?.focus();
+    }
+    wasSendingRef.current = sending;
+  }, [sending, isFinished]);
 
   // SSE の 1 イベント分 ("event: ...\ndata: ...\n\n") を event 名と生 data 文字列に分解する。
   const parseSseFrame = (rawEvent: string): { event: string; rawData: string } | null => {
