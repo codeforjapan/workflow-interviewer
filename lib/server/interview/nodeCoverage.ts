@@ -6,7 +6,7 @@ import {
   type StandardNodeRef,
 } from "@/lib/kb/standardNodes";
 import type { MessageMeta, SessionExtractedData } from "@/lib/db/schema";
-import { isMinimumFilled } from "./slots";
+import { isMinimumFilled, type SlotKey } from "./slots";
 
 /**
  * 標準フローの「本筋ノード」1件あたりの照合結果。
@@ -304,6 +304,23 @@ export function formatNodeCoverageAsGuide(item: NodeCoverageItem): string {
   return `標準フローの次のステップは「${item.label}」です${owner}。実際の業務ではこのステップをどのように行っていますか？担当者・タイミング・使用システムなど分かる範囲で教えてください。`;
 }
 
+/**
+ * formatNodeCoverageAsGuide と対で使う、message.meta.targetNode の組み立て。
+ * controller.ts (ターン処理中) と sessions.ts (セッション作成時の最初の質問) の両方で使う
+ * (issue: 両者が別々にこのオブジェクトを組み立てていた結果、sessions.ts 側だけ decompose
+ * ロジックが抜け落ち、最初の質問が「開始から完了まで」という粗い一括質問になっていた)。
+ */
+export function buildStepsTargetNode(
+  item: NodeCoverageItem,
+): NonNullable<MessageMeta["targetNode"]> {
+  return {
+    kind: "standard",
+    nodeId: item.nodeId,
+    rawId: item.rawId,
+    blockIndex: item.blockIndex,
+  };
+}
+
 /** テスト用にキャッシュをリセットするヘルパ。 */
 export function _resetNodeCoverageCache() {
   mainNodesCache.clear();
@@ -330,10 +347,11 @@ export function shouldBoostIncidents(params: {
   incidentsEmpty: boolean;
   extracted: SessionExtractedData;
   nodeCoverage: NodeCoverageResult | null;
+  confirmedExhausted?: ReadonlySet<SlotKey>;
 }): boolean {
-  const { cuesCount, incidentsEmpty, extracted, nodeCoverage } = params;
+  const { cuesCount, incidentsEmpty, extracted, nodeCoverage, confirmedExhausted } = params;
   if (cuesCount === 0 || !incidentsEmpty) return false;
-  if (!isMinimumFilled(extracted, nodeCoverage)) return false;
+  if (!isMinimumFilled(extracted, nodeCoverage, confirmedExhausted)) return false;
   // nodeCoverage が計算不能 (KB無し等) のときはゲート自体を無効化し、既存挙動を維持する
   return !nodeCoverage || nodeCoverage.coverageRatio >= MAIN_FLOW_COVERAGE_GATE;
 }

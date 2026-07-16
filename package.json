@@ -14,6 +14,7 @@
     "check:node-coverage": "tsx scripts/check-node-coverage.ts",
     "check:progress": "tsx scripts/check-progress.ts",
     "check:kb-seed": "tsx scripts/check-kb-seed.ts",
+    "check:hypothesis": "tsx scripts/check-hypothesis.ts",
     "check:risks": "tsx scripts/check-risks.ts",
     "check:gap-cues": "tsx scripts/check-gap-cues.ts",
     "check:cautions": "tsx scripts/check-cautions.ts",

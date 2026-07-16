@@ -21,6 +21,7 @@
 | `"incident"` | `incident-catalog/INC-*.md` | id, title, severity, frequency, fix_cost |
 | `"stakeholder-profile"` | `stakeholders/*.md` | stakeholder_type, organization_name, legal_basis |
 | `"concept"` | `concepts/*.md` | concept_id, concept_name, divergence_scope, related_workflows, ai_caution |
+| `"overview"` | `workflows/_standardized-20/*/overview.md` | （必須プロパティなし。file_type のみ） |
 
 ### 記述例（flow-standard.md）
 
@@ -252,7 +253,23 @@ review_status: "drafted"
 
 **現在の概念一覧**: `concepts/README.md` 参照。新しい概念を追加したら `concepts/README.md` のファイル一覧も更新してください。
 
-### G. 誤りの報告
+### G. 業務概要（`overview.md`）の追加
+
+`flow-standard.md` の frontmatter（`spec_law` 等）は根拠条文の一行引用に留まるが、
+制度の趣旨・沿革・年間サイクル・全国的によくある論点といった「その業務を知らない人向けの
+解説」は書ける場所がなかった。`workflows/_standardized-20/<業務フォルダ>/overview.md` に
+`templates/overview-template.md` を参考に追加してください（全業務必須ではない任意ドキュメント）。
+
+**記載するもの**: 制度の概要（沿革・立法趣旨）、課税・給付等の基本構造、年間の定型サイクル、
+全国的によくある構造的な論点
+**記載しないもの**: 自治体固有の運用・担当者名等（`local/` を使う）、個別のインシデント詳細
+（`incident-catalog/` を使う）、標準フローの手順そのもの（`flow-standard.md` を使う）
+
+見出しは他のドキュメント種別と同様、必ず `## `（H2）を使うこと。用途上、インタビューAIが
+「業務名を教えてください」のようなゼロベースの質問をせず、この内容を仮説として提示した上で
+確認する形に変換して使う（`lib/kb/hypothesis.ts` の `loadTaskHypothesis` 参照）。
+
+### H. 誤りの報告
 
 **Issue** で報告してください。以下を記載してください。
 - 誤りのある箇所（ファイル名・セクション名）

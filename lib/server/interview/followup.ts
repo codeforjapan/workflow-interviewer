@@ -271,6 +271,7 @@ function buildSystemPrompt(taskSlug?: string | null): string {
 - 推測や断定はしない
 - 1文・120文字以内
 - 回答者が答えやすい自然な口調
+- 「貴庁」「御庁」等のよそよそしい呼びかけ語は使わない（主語を省くか、自然な言い方に置き換える）
 ${fillGoal}
 
 選択肢 (choices) の出し方:

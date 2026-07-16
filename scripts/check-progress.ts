@@ -145,10 +145,12 @@ async function main() {
     const askedTwice = [
       {
         role: "assistant",
+        content: "",
         meta: { targetNode: { kind: "standard" as const, nodeId: target.id, rawId: target.rawId, blockIndex: 0 } },
       },
       {
         role: "assistant",
+        content: "",
         meta: { targetNode: { kind: "standard" as const, nodeId: target.id, rawId: target.rawId, blockIndex: 0 } },
       },
     ];

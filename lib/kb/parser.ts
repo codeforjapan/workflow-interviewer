@@ -5,15 +5,18 @@ import {
   FlowStandardFrontmatterSchema,
   GapNotesFrontmatterSchema,
   IncidentFrontmatterSchema,
+  OverviewFrontmatterSchema,
   type ConceptSection,
   type FlowStandardMermaidBlock,
   type Gap,
   type GapSection,
   type IncidentSection,
+  type OverviewSection,
   type ParsedConceptDoc,
   type ParsedFlowStandard,
   type ParsedGapNotes,
   type ParsedIncidentDoc,
+  type ParsedOverviewDoc,
 } from "./types";
 
 export { parseMermaidFlowchart } from "./mermaid";
@@ -38,6 +41,29 @@ function findPrecedingH2(markdown: string, pos: number): string | null {
     title = m[1].trim();
   }
   return title;
+}
+
+/**
+ * `## ` 見出しごとに本文を分割する。concepts/incident/overview の各パーサーが
+ * 同じ「H2 見出し → 次の H2 直前までを本文とする」構造を持つため共有する。
+ */
+function splitH2Sections(content: string): Array<{ heading: string; body: string }> {
+  const positions: Array<{ start: number; headerEnd: number; heading: string }> = [];
+  H2_HEADING.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = H2_HEADING.exec(content)) !== null) {
+    positions.push({
+      start: m.index,
+      headerEnd: m.index + m[0].length,
+      heading: m[1].trim(),
+    });
+  }
+
+  return positions.map((cur, i) => {
+    const next = positions[i + 1];
+    const body = content.slice(cur.headerEnd, next ? next.start : content.length).trim();
+    return { heading: cur.heading, body };
+  });
 }
 
 export function parseFlowStandard(markdown: string): ParsedFlowStandard {
@@ -167,32 +193,15 @@ export function parseGapNotes(markdown: string): ParsedGapNotes {
 export function parseIncidentDoc(markdown: string): ParsedIncidentDoc {
   const parsed = matter(markdown);
   const frontmatter = IncidentFrontmatterSchema.parse(parsed.data);
-  const content = parsed.content;
-
-  const positions: Array<{ start: number; headerEnd: number; heading: string }> =
-    [];
-  H2_HEADING.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = H2_HEADING.exec(content)) !== null) {
-    positions.push({
-      start: m.index,
-      headerEnd: m.index + m[0].length,
-      heading: m[1].trim(),
-    });
-  }
+  const allSections = splitH2Sections(parsed.content);
 
   let whatHappens = "";
   const sections: IncidentSection[] = [];
-  for (let i = 0; i < positions.length; i += 1) {
-    const cur = positions[i];
-    const next = positions[i + 1];
-    const body = content
-      .slice(cur.headerEnd, next ? next.start : content.length)
-      .trim();
-    if (cur.heading === WHAT_HAPPENS_HEADING) {
-      whatHappens = body;
+  for (const section of allSections) {
+    if (section.heading === WHAT_HAPPENS_HEADING) {
+      whatHappens = section.body;
     } else {
-      sections.push({ heading: cur.heading, body });
+      sections.push(section);
     }
   }
 
@@ -205,29 +214,18 @@ export function parseIncidentDoc(markdown: string): ParsedIncidentDoc {
 export function parseConceptDoc(markdown: string): ParsedConceptDoc {
   const parsed = matter(markdown);
   const frontmatter = ConceptFrontmatterSchema.parse(parsed.data);
-  const content = parsed.content;
+  const sections: ConceptSection[] = splitH2Sections(parsed.content);
+  return { frontmatter, sections, raw: markdown };
+}
 
-  const positions: Array<{ start: number; headerEnd: number; heading: string }> =
-    [];
-  H2_HEADING.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = H2_HEADING.exec(content)) !== null) {
-    positions.push({
-      start: m.index,
-      headerEnd: m.index + m[0].length,
-      heading: m[1].trim(),
-    });
-  }
-
-  const sections: ConceptSection[] = [];
-  for (let i = 0; i < positions.length; i += 1) {
-    const cur = positions[i];
-    const next = positions[i + 1];
-    const body = content
-      .slice(cur.headerEnd, next ? next.start : content.length)
-      .trim();
-    sections.push({ heading: cur.heading, body });
-  }
-
+/**
+ * workflows/_standardized-20/<slug>/overview.md をパースする。
+ * concepts/*.md と同じ「全 H2 セクションを順序保持で抽出」形。
+ * 制度趣旨・沿革・年間サイクル・よくある論点などの自由記述解説を持つ、全業務必須ではない任意ドキュメント。
+ */
+export function parseOverviewDoc(markdown: string): ParsedOverviewDoc {
+  const parsed = matter(markdown);
+  const frontmatter = OverviewFrontmatterSchema.parse(parsed.data);
+  const sections: OverviewSection[] = splitH2Sections(parsed.content);
   return { frontmatter, sections, raw: markdown };
 }

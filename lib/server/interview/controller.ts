@@ -1,6 +1,7 @@
 import { eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
+import { loadTaskHypothesis } from "@/lib/kb/hypothesis";
 import { messages, sessions, type MessageMeta, type SessionExtractedData } from "@/lib/db/schema";
 import type { ExtractedBusinessInfo } from "@/lib/server/interview/schema";
 import { recomputeGaps, shouldRecomputeGaps } from "@/lib/server/gap/recompute";
@@ -11,6 +12,7 @@ import { streamAdaptiveQuestion } from "./followup";
 import { formatGapCueAsGuide, loadGapCues, pickUnmatchedGapCues } from "./gapCues";
 import {
   applyAskLimit,
+  buildStepsTargetNode,
   computeNodeCoverage,
   countNodeAsks,
   formatNodeCoverageAsGuide,
@@ -20,7 +22,18 @@ import {
 import { buildInterviewProgress, type InterviewProgress } from "./progress";
 import { questions } from "./questions";
 import { formatRiskCueAsGuide, loadRiskCues } from "./risks";
-import { chooseNextSlot, getSlotTemplate, isFinished, MAX_TURNS, SLOT_DEFS, type SlotBoosts } from "./slots";
+import {
+  appendExhaustionChoice,
+  chooseNextSlot,
+  confirmedExhaustedSlots,
+  countSlotAsks,
+  excludedSlotsFromAskCounts,
+  getSlotGuideQuestion,
+  isFinished,
+  isMinimumFilled,
+  MAX_TURNS,
+  type SlotBoosts,
+} from "./slots";
 
 const INCIDENTS_RISK_BOOST = 50;
 
@@ -147,17 +160,33 @@ export async function handleUserTurnStreaming(params: {
   // 進んでいない」として隠す (issue: 未到達のノードまで「不足」と表示され不親切だった)。
   updatedExtracted.gaps = pruneResolvedMissingGaps(updatedExtracted.gaps, nodeCoverage, askCounts);
 
+  // 完了判定の主経路: ユーザーが「もうない/以上です」等、明確な打ち切りを宣言したスロットは
+  // 件数に関わらず completeness=1 として扱う (issue: connections/stakeholders 等は自治体ごとに
+  // 実件数が全く異なり、件数の閾値には普遍的な「正解」が無いため、ユーザー自身の申告を
+  // 最優先の完了シグナルとする)。isFinished より前に計算し、両方に渡す必要がある。
+  const exhaustedSlots = confirmedExhaustedSlots(conversation);
+
+  // サーキットブレーカー (スロット版・二次的な安全網): meta.targetSlot で「これまで何回この
+  // スロットを狙い撃ちしたか」を数え、SLOT_ASK_LIMIT 回を超えても completeness が進まない
+  // スロットは以後の選択対象から除外する (issue: stakeholders と connections の質問が意味的に
+  // 衝突し、部署名の回答が毎回 connections 側に吸われて stakeholders が永遠に空のまま質問され
+  // 続け、セッションがループした実例)。上記の exhaustedSlots 検出が主経路で、これは検出漏れ
+  // (ユーザーが打ち切りを明言しないまま話が進まない場合等) のための保険。
+  const slotAskCounts = countSlotAsks(conversation);
+  const excludedSlots = excludedSlotsFromAskCounts(slotAskCounts);
+
   const reachedMax = nextTurnCount >= MAX_TURNS;
-  const finished = isFinished(updatedExtracted, nextTurnCount, nodeCoverage);
+  const finished = isFinished(updatedExtracted, nextTurnCount, nodeCoverage, exhaustedSlots);
   const shouldClose = reachedMax || finished;
 
   // B3/UX2: 業務 KB の creates_risks → INC-*.md 由来の cue と、gap-notes.md の reality
   // 記述由来の cue (UX2 新規) を読み、tier-1 が充足 & incidents が空 & 本筋ノード被覆が
   // MAIN_FLOW_COVERAGE_GATE 以上のときに incidents スロットを強くブースト
   // (UX1: 本筋が薄いうちは枝葉の深掘りを抑える)。
-  const [riskCues, gapCuesAll] = await Promise.all([
+  const [riskCues, gapCuesAll, hypothesis] = await Promise.all([
     loadRiskCues(session.taskSlug ?? ""),
     loadGapCues(session.taskSlug ?? ""),
+    loadTaskHypothesis(session.taskSlug ?? ""),
   ]);
   const gapCues = pickUnmatchedGapCues(gapCuesAll, updatedExtracted.gaps);
   const combinedCues: Array<
@@ -176,6 +205,7 @@ export async function handleUserTurnStreaming(params: {
       incidentsEmpty: incidentsEmpty || gapCues.length > 0,
       extracted: updatedExtracted,
       nodeCoverage,
+      confirmedExhausted: exhaustedSlots,
     })
   ) {
     boosts.incidents = INCIDENTS_RISK_BOOST;
@@ -186,17 +216,34 @@ export async function handleUserTurnStreaming(params: {
   // UX6: 質問がどの標準フローノードを対象にしているか。特定できる質問 ("steps" スロットで
   // 未確認の本筋ノードを名指しする場合) のみ設定し、フロー図側のハイライトに使う。
   let targetNode: MessageMeta["targetNode"];
+  // このターンで実際に選ばれたスロット。countSlotAsks のサーキットブレーカーが次ターン以降
+  // 参照できるよう、assistant メッセージの meta.targetSlot に記録する。
+  let targetSlot: MessageMeta["targetSlot"];
+  // クロージングに入るとき、必須スロットが実際に充足しているか (excludedSlots は見ない) で
+  // 文言を切り替える。genuine 完了なら closing、サーキットブレーカー等で打ち切っただけで
+  // 必須項目が埋まっていない場合は closingIncomplete を使い、「完了しました」と誤って
+  // 宣言しない (issue: readyToFinish=false=完了ボタン非活性なのに完了文言が出て矛盾)。
+  const minimumFilled = isMinimumFilled(updatedExtracted, nodeCoverage, exhaustedSlots);
+  const closingContent = minimumFilled ? questions.closing : questions.closingIncomplete;
   if (shouldClose) {
-    nextContent = questions.closing;
+    nextContent = closingContent;
   } else {
-    const slot = chooseNextSlot(updatedExtracted, userInput, boosts, nodeCoverage);
+    const slot = chooseNextSlot(
+      updatedExtracted,
+      userInput,
+      boosts,
+      nodeCoverage,
+      excludedSlots,
+      exhaustedSlots,
+    );
     if (!slot) {
-      nextContent = questions.closing;
+      nextContent = closingContent;
     } else {
+      targetSlot = slot;
       // incidents スロットが選ばれ、かつ combinedCues (risk cue / gap cue) があれば、
       // テンプレを「もし X が起きたら」型 or「他自治体ではこう」型に差し替える。
       // ターン毎に cue をローテーションして同じ問いを連投しない。
-      let guideQuestion = getSlotTemplate(slot, session.taskSlug);
+      let guideQuestion = getSlotGuideQuestion(slot, session.taskSlug, hypothesis);
       if (slot === "incidents" && combinedCues.length > 0) {
         const picked = combinedCues[nextTurnCount % combinedCues.length];
         guideQuestion =
@@ -204,12 +251,7 @@ export async function handleUserTurnStreaming(params: {
       } else if (slot === "steps" && nodeCoverage?.nextUnconfirmed) {
         // UX1: 未確認の本筋ノードがあれば、それを具体的に指す質問に差し替える。
         guideQuestion = formatNodeCoverageAsGuide(nodeCoverage.nextUnconfirmed);
-        targetNode = {
-          kind: "standard",
-          nodeId: nodeCoverage.nextUnconfirmed.nodeId,
-          rawId: nodeCoverage.nextUnconfirmed.rawId,
-          blockIndex: nodeCoverage.nextUnconfirmed.blockIndex,
-        };
+        targetNode = buildStepsTargetNode(nodeCoverage.nextUnconfirmed);
       }
       const followup = await streamAdaptiveQuestion({
         sessionId,
@@ -227,7 +269,10 @@ export async function handleUserTurnStreaming(params: {
         onDelta: onQuestionDelta,
       });
       nextContent = followup.content;
-      nextChoices = followup.choices;
+      // OPEN_ENDED_SLOTS (stakeholders/connections/exceptions/incidents) には、クリック一つで
+      // 明確な打ち切りを宣言できる定型選択肢を機械的に追加する。isExhaustionReply がこの選択肢
+      // 自体も検出対象にしているため、自由記述で似た言い回しを打った場合と同じロジックで拾える。
+      nextChoices = appendExhaustionChoice(followup.choices, slot);
     }
   }
 
@@ -238,7 +283,11 @@ export async function handleUserTurnStreaming(params: {
       sessionId,
       role: "assistant",
       content: nextContent,
-      meta: { choices: nextChoices, ...(targetNode ? { targetNode } : {}) },
+      meta: {
+        choices: nextChoices,
+        ...(targetNode ? { targetNode } : {}),
+        ...(targetSlot ? { targetSlot } : {}),
+      },
     })
     .returning();
 
@@ -264,6 +313,7 @@ export async function handleUserTurnStreaming(params: {
     extracted: updatedExtracted,
     turnCount: updatedIndex,
     nodeCoverage,
+    confirmedExhausted: exhaustedSlots,
   });
 
   return {

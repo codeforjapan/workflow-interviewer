@@ -5,7 +5,8 @@ import { desc, eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
-import { sessions, messages } from "@/lib/db/schema";
+import { loadTaskHypothesis } from "@/lib/kb/hypothesis";
+import { sessions, messages, type MessageMeta } from "@/lib/db/schema";
 import { detectCautionFlagsForExtracted } from "@/lib/server/interview/cautions";
 import {
   handleUserTurnStreaming,
@@ -14,10 +15,15 @@ import {
 import { buildJsonReport } from "@/lib/server/export/json";
 import { buildMarkdownReport } from "@/lib/server/export/markdown";
 import { recomputeGaps } from "@/lib/server/gap/recompute";
-import { countNodeAsks } from "@/lib/server/interview/nodeCoverage";
+import {
+  buildStepsTargetNode,
+  computeNodeCoverage,
+  countNodeAsks,
+  formatNodeCoverageAsGuide,
+} from "@/lib/server/interview/nodeCoverage";
 import { computeInterviewProgress } from "@/lib/server/interview/progress";
 import { questions } from "@/lib/server/interview/questions";
-import { getSlotTemplate, SLOT_DEFS } from "@/lib/server/interview/slots";
+import { appendExhaustionChoice, chooseNextSlot, getSlotGuideQuestion } from "@/lib/server/interview/slots";
 import { generateAdaptiveQuestion } from "@/lib/server/interview/followup";
 import { loadSeedConnections } from "@/lib/server/interview/seed";
 import { openai, MODELS } from "@/lib/server/openai";
@@ -96,7 +102,10 @@ export const sessionsRoute = new Hono()
       body = undefined;
     }
     const taskSlug = body?.task_slug ?? DEFAULT_TASK_SLUG;
-    const seedConnections = await loadSeedConnections(taskSlug);
+    const [seedConnections, hypothesis] = await Promise.all([
+      loadSeedConnections(taskSlug),
+      loadTaskHypothesis(taskSlug),
+    ]);
 
     const id = nanoid(12);
     const [session] = await db
@@ -105,8 +114,16 @@ export const sessionsRoute = new Hono()
         id,
         taskSlug,
         extractedData: {
-          taskName: null,
-          purpose: null,
+          // KB 標準フローの表示名が分かる業務は taskName を事前に埋め、
+          // 「業務の正式名称を教えてください」というゼロベースの最初の質問を丸ごと省く
+          // (hypothesis が null の場合、つまり sonota や KB 未登録スラッグは従来通り null のまま質問する)。
+          taskName: hypothesis?.taskName ?? null,
+          // overview.md 由来の purposeContext (KB が既に説明している制度趣旨) がある業務は
+          // purpose も事前に埋め、「目的を教えてください」という抽象的で現場には答えにくい
+          // 質問自体を省く (issue: 職員から「目的を聞かれても意味がわからない」との指摘)。
+          // overview.md が無い業務は従来通り null のまま質問する（getSlotGuideQuestion の
+          // 具体的な言い回しにフォールバック）。
+          purpose: hypothesis?.purposeContext ?? null,
           legalBasis: null,
           stakeholders: [],
           steps: [],
@@ -120,14 +137,32 @@ export const sessionsRoute = new Hono()
       })
       .returning();
 
+    const firstSlot = chooseNextSlot(session.extractedData, "", {}, null) ?? "purpose";
+    // taskName/purpose が事前 seed される KB 業務では、最初の実質的な質問がいきなり "steps"
+    // (weight 9 で最上位) になりうる。controller.ts のターン内処理は steps が選ばれたとき
+    // nodeCoverage の未確認ノードを1つずつ指す質問に差し替えるが、この最初の質問生成だけは
+    // それをやっていなかったため、"開始から完了まで一気に教えてください" という粗い一括質問に
+    // なってしまっていた (issue: 初回質問が「一気に全部答える」感じになる)。同じ decompose を
+    // ここでも行う (nodeCoverage.ts の formatNodeCoverageAsGuide/buildStepsTargetNode を共有)。
+    let firstGuideQuestion = getSlotGuideQuestion(firstSlot, taskSlug, hypothesis);
+    let firstNodeCoverage: Awaited<ReturnType<typeof computeNodeCoverage>> = null;
+    let firstTargetNode: MessageMeta["targetNode"];
+    if (firstSlot === "steps") {
+      firstNodeCoverage = await computeNodeCoverage(taskSlug, [], new Set());
+      if (firstNodeCoverage?.nextUnconfirmed) {
+        firstGuideQuestion = formatNodeCoverageAsGuide(firstNodeCoverage.nextUnconfirmed);
+        firstTargetNode = buildStepsTargetNode(firstNodeCoverage.nextUnconfirmed);
+      }
+    }
     const firstQuestion = await generateAdaptiveQuestion({
       sessionId: id,
       sessionStatus: session.status,
-      guideQuestion: getSlotTemplate("taskName", taskSlug),
+      guideQuestion: firstGuideQuestion,
       questionIndex: 0,
       conversation: [],
       extracted: session.extractedData,
       taskSlug: session.taskSlug,
+      nodeCoverage: firstSlot === "steps" ? firstNodeCoverage : null,
     });
     const opener = `${questions.opener}\n\n${firstQuestion.content}`;
     const [firstMessage] = await db
@@ -137,7 +172,13 @@ export const sessionsRoute = new Hono()
         sessionId: id,
         role: "assistant",
         content: opener,
-        meta: { choices: firstQuestion.choices },
+        // targetSlot: countSlotAsks/confirmedExhaustedSlots (controller.ts) がスロット毎の
+        // 質問回数・打ち切り宣言を数える起点。ここで設定し忘れると最初の質問がノーカウントになる。
+        meta: {
+          choices: appendExhaustionChoice(firstQuestion.choices, firstSlot),
+          targetSlot: firstSlot,
+          ...(firstTargetNode ? { targetNode: firstTargetNode } : {}),
+        },
       })
       .returning();
 

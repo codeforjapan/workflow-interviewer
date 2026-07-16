@@ -6,6 +6,7 @@ import {
   type NodeCoverageResult,
 } from "./nodeCoverage";
 import {
+  confirmedExhaustedSlots,
   isFinished,
   MIN_TURNS_BEFORE_FINISH,
   REQUIRED_SLOT_THRESHOLD,
@@ -44,11 +45,12 @@ export function buildInterviewProgress(params: {
   extracted: SessionExtractedData;
   turnCount: number;
   nodeCoverage: NodeCoverageResult | null;
+  confirmedExhausted?: ReadonlySet<SlotKey>;
 }): InterviewProgress {
-  const { extracted, turnCount, nodeCoverage } = params;
+  const { extracted, turnCount, nodeCoverage, confirmedExhausted } = params;
   const requiredKeys = SLOT_KEYS.filter((k) => SLOT_DEFS[k].requiredForMinimum);
   const requiredSlots: SlotProgressItem[] = requiredKeys.map((key) => {
-    const completeness = slotCompleteness(extracted, key, nodeCoverage);
+    const completeness = slotCompleteness(extracted, key, nodeCoverage, confirmedExhausted);
     return {
       key,
       label: SLOT_DEFS[key].shortLabel,
@@ -62,7 +64,7 @@ export function buildInterviewProgress(params: {
     requiredFilledCount: requiredSlots.filter((s) => s.filled).length,
     requiredTotalCount: requiredSlots.length,
     minTurnsReached: turnCount >= MIN_TURNS_BEFORE_FINISH,
-    readyToFinish: isFinished(extracted, turnCount, nodeCoverage),
+    readyToFinish: isFinished(extracted, turnCount, nodeCoverage, confirmedExhausted),
     nodeCoverage,
   };
 }
@@ -81,7 +83,7 @@ export async function computeInterviewProgress(params: {
   extracted: SessionExtractedData;
   turnCount: number;
   taskSlug: string | null | undefined;
-  messages: ReadonlyArray<{ role: string; meta?: MessageMeta | null }>;
+  messages: ReadonlyArray<{ role: string; content: string; meta?: MessageMeta | null }>;
 }): Promise<InterviewProgress> {
   let nodeCoverage: NodeCoverageResult | null = null;
   try {
@@ -96,9 +98,13 @@ export async function computeInterviewProgress(params: {
   } catch (err) {
     console.error("[computeInterviewProgress] node coverage failed", err);
   }
+  // ターン内処理 (controller.ts) と同じ「明確な打ち切り宣言」判定をここでも行う。
+  // 別々に計算すると、ターン内で表示される readyToFinish とページ再読み込み後の
+  // それが食い違ってしまう (applyAskLimit と同じ理由、上記コメント参照)。
   return buildInterviewProgress({
     extracted: params.extracted,
     turnCount: params.turnCount,
     nodeCoverage,
+    confirmedExhausted: confirmedExhaustedSlots(params.messages),
   });
 }

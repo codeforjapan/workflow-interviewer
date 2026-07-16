@@ -85,6 +85,10 @@ export type MessageMeta = {
     /** 0-based。StandardFlowSummary.mermaidSources のインデックスと一致 */
     blockIndex: number;
   };
+  /** この質問が対象にしている SlotKey (slots.ts)。サーキットブレーカー
+   *  (countSlotAsks/SLOT_ASK_LIMIT) が「同じスロットを何回聞いたか」を数えるために使う。
+   *  クロージング質問等、特定のスロットに紐づかない場合は省略される。 */
+  targetSlot?: string;
 };
 
 export const messages = pgTable("messages", {

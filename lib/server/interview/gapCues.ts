@@ -77,7 +77,7 @@ export function pickUnmatchedGapCues(
  * risks.ts の formatRiskCueAsGuide と対称的な役割。
  */
 export function formatGapCueAsGuide(cue: GapCue): string {
-  return `他の自治体では「${cue.title}」に関連して、次のような状況が起きることがあります。\n${cue.realitySummary}\n\n御庁ではこれに近い状況・お困りごとはありますか？実際の対応や工夫があれば教えてください。`;
+  return `他の自治体では「${cue.title}」に関連して、次のような状況が起きることがあります。\n${cue.realitySummary}\n\nこれに近い状況・お困りごとはありますか？実際の対応や工夫があれば教えてください。`;
 }
 
 /** テスト用にキャッシュをリセットするヘルパ。 */

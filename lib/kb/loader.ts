@@ -5,12 +5,14 @@ import {
   parseFlowStandard,
   parseGapNotes,
   parseIncidentDoc,
+  parseOverviewDoc,
 } from "./parser";
 import type {
   ParsedConceptDoc,
   ParsedFlowStandard,
   ParsedGapNotes,
   ParsedIncidentDoc,
+  ParsedOverviewDoc,
 } from "./types";
 
 const KB_ROOT_DOCS = path.join(process.cwd(), "docs", "kb");
@@ -45,6 +47,22 @@ export async function loadWorkflowBySlug(slug: string): Promise<LoadedWorkflow> 
     flowStandard: parseFlowStandard(flowStandardRaw),
     gapNotes: parseGapNotes(gapNotesRaw),
   };
+}
+
+/**
+ * workflows/_standardized-20/<slug>/overview.md を読み込む。
+ * 制度趣旨・沿革・年間サイクル・よくある論点などの自由記述解説文書で、全業務必須ではない。
+ * ファイルが存在しない業務では null を返す（呼び出し側は「仮説なし」フォールバックとして扱う）。
+ */
+export async function loadOverviewBySlug(slug: string): Promise<ParsedOverviewDoc | null> {
+  const file = path.join(KB_ROOT, slug, "overview.md");
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf-8");
+  } catch {
+    return null;
+  }
+  return parseOverviewDoc(raw);
 }
 
 /**
@@ -84,7 +102,7 @@ export type WorkflowMeta = {
 const WORKFLOW_TITLE_RE = /^#\s+(.+?)\s*$/m;
 const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n/;
 
-function extractDisplayName(raw: string, slug: string): string {
+export function extractDisplayName(raw: string, slug: string): string {
   // gray-matter の frontmatter 内に `# 依存関係` 等のコメント風行が含まれる KB があるため、
   // frontmatter ブロックを落としてから H1 を探す
   const body = raw.replace(FRONTMATTER_RE, "");

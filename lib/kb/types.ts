@@ -186,6 +186,35 @@ export const ParsedConceptDocSchema = z.object({
 
 export type ParsedConceptDoc = z.infer<typeof ParsedConceptDocSchema>;
 
+/**
+ * workflows/_standardized-20/<slug>/overview.md の frontmatter。
+ * flow-standard.md の spec_law (一行の条文引用) とは違い、制度趣旨・沿革・
+ * よくある論点など自由記述の解説文を持つ。全業務必須ではない任意ドキュメント。
+ */
+export const OverviewFrontmatterSchema = z
+  .object({
+    file_type: z.literal("overview"),
+  })
+  .passthrough();
+
+export type OverviewFrontmatter = z.infer<typeof OverviewFrontmatterSchema>;
+
+export const OverviewSectionSchema = z.object({
+  heading: z.string(),
+  body: z.string(),
+});
+
+export type OverviewSection = z.infer<typeof OverviewSectionSchema>;
+
+export const ParsedOverviewDocSchema = z.object({
+  frontmatter: OverviewFrontmatterSchema,
+  /** 全 H2 セクションを順序保持で保持（"制度の概要"/"よくある論点" 等）。 */
+  sections: z.array(OverviewSectionSchema),
+  raw: z.string(),
+});
+
+export type ParsedOverviewDoc = z.infer<typeof ParsedOverviewDocSchema>;
+
 export function normalizeLifecycle(value: string | string[]): string[] {
   return Array.isArray(value) ? value : [value];
 }
