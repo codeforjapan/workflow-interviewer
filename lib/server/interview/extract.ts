@@ -1,5 +1,5 @@
 import { zodResponseFormat } from "openai/helpers/zod";
-import { MODELS, openai } from "@/lib/server/openai";
+import { MODELS, llm } from "@/lib/server/llm";
 import {
   ExtractedBusinessInfoSchema,
   type ExtractedBusinessInfo,
@@ -87,7 +87,7 @@ export async function extractBusinessInfo(params: {
     .join("\n");
   const mainNodesSection = buildMainFlowNodesSection(params.mainNodes);
 
-  const completion = await openai.chat.completions.parse({
+  const completion = await llm.chat.completions.parse({
     model: MODELS.extract,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },

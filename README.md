@@ -45,8 +45,11 @@ cd workflow-interviewer
 cp .env.example .env.local
 ```
 
-`.env.local` をテキストエディタで開き、`OPENAI_API_KEY=` の右側に API キーを貼り付ける。  
-キーは https://platform.openai.com/api-keys で取得できます。
+`.env.local` をテキストエディタで開き、`OPENROUTER_API_KEY=` の右側に API キーを貼り付ける。  
+キーは https://openrouter.ai/keys で取得できます。
+
+使う AI モデルは `OPENROUTER_MODEL` で切り替えられます（省略時は `google/gemini-3.1-flash-lite`）。
+モデル名は https://openrouter.ai/models の一覧から選んでそのまま貼り付けるだけです。
 
 ### 3. 開発環境を起動
 
@@ -133,7 +136,8 @@ Supabase Studio の Table Editor で `sessions` / `messages` ができていれ�
 1. Vercel で GitHub リポジトリをインポート（Framework は Next.js が自動検出。`main` ブランチを指定）。
 2. **Environment Variables** を設定:
    - `DATABASE_URL` … Transaction pooler 接続文字列（port `6543`, `?pgbouncer=true`）
-   - `OPENAI_API_KEY` … OpenAI API キー
+   - `OPENROUTER_API_KEY` … OpenRouter API キー
+   - `OPENROUTER_MODEL` … 使うモデル名（任意。省略時は `google/gemini-3.1-flash-lite`）
 3. Deploy。
 
 > KB（`docs/kb/`）は実行時にファイル読み込みするため、`next.config.ts` の `outputFileTracingIncludes` でサーバー関数にバンドルしている。

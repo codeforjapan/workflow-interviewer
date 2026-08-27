@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { loadStandardFlowSummary } from "@/lib/kb/loader";
-import { MODELS, openai } from "@/lib/server/openai";
+import { MODELS, llm } from "@/lib/server/llm";
 import type { SessionExtractedData } from "@/lib/db/schema";
 import type { NodeCoverageResult } from "./nodeCoverage";
 
@@ -120,7 +120,7 @@ export async function generateAdaptiveQuestion(
 ): Promise<FollowupResult> {
   try {
     const request = await buildFollowupRequest(params);
-    const completion = await openai.chat.completions.parse(request);
+    const completion = await llm.chat.completions.parse(request);
     const parsed = completion.choices[0]?.message.parsed;
     if (!parsed || !parsed.content.trim()) {
       return { content: params.guideQuestion, choices: [] };
@@ -148,7 +148,7 @@ export async function streamAdaptiveQuestion(
   const { onDelta, ...rest } = params;
   try {
     const request = await buildFollowupRequest(rest);
-    const stream = openai.chat.completions.stream(request);
+    const stream = llm.chat.completions.stream(request);
     let lastContent = "";
     stream.on("content.delta", (event) => {
       const parsed = event.parsed as { content?: unknown } | null;
