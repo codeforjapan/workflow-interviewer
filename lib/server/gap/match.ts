@@ -2,7 +2,7 @@ import { z } from "zod";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { loadWorkflowBySlug } from "@/lib/kb/loader";
 import type { Gap as KnownGap } from "@/lib/kb/types";
-import { MODELS, openai } from "@/lib/server/openai";
+import { MODELS, llm } from "@/lib/server/llm";
 import type {
   ExtractedGap,
   SessionExtractedData,
@@ -177,14 +177,14 @@ const SYSTEM_PROMPT = `あなたは標準業務フローと現場フローのギ
  * LLM 呼び出し本体。
  * 渡された候補が空のときは即座に空配列を返す。
  */
-async function callOpenAIMatcher(
+async function callLlmMatcher(
   candidates: GapMatchCandidate[],
   context: string,
 ): Promise<
   Array<{ gap_index: number; status: "matched" | "partial" | "not_matched"; reason: string | null }>
 > {
   if (candidates.length === 0) return [];
-  const completion = await openai.chat.completions.parse({
+  const completion = await llm.chat.completions.parse({
     model: MODELS.extract,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
@@ -219,7 +219,7 @@ export type GapMatcher = (
  */
 export async function matchKnownGaps(
   input: GapMatchInput,
-  matcher: GapMatcher = callOpenAIMatcher,
+  matcher: GapMatcher = callLlmMatcher,
 ): Promise<ExtractedGap[]> {
   if (!input.slug) return input.extracted.gaps;
   let workflow;

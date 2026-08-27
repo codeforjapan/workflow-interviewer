@@ -26,7 +26,7 @@ import { questions } from "@/lib/server/interview/questions";
 import { appendExhaustionChoice, chooseNextSlot, getSlotGuideQuestion } from "@/lib/server/interview/slots";
 import { generateAdaptiveQuestion } from "@/lib/server/interview/followup";
 import { loadSeedConnections } from "@/lib/server/interview/seed";
-import { openai, MODELS } from "@/lib/server/openai";
+import { llm, MODELS } from "@/lib/server/llm";
 
 const DEFAULT_TASK_SLUG = "sonota";
 
@@ -425,7 +425,7 @@ export const sessionsRoute = new Hono()
 
     if (taskName || purpose) {
       try {
-        const completion = await openai.chat.completions.create({
+        const completion = await llm.chat.completions.create({
           model: MODELS.chat,
           messages: [
             {

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { loadWorkflowBySlug } from "@/lib/kb/loader";
 import { flattenStandardNodes, type StandardNodeRef } from "@/lib/kb/standardNodes";
-import { MODELS, openai } from "@/lib/server/openai";
+import { MODELS, llm } from "@/lib/server/llm";
 import type {
   ExtractedGap,
   SessionExtractedData,
@@ -28,7 +28,7 @@ const DiffResponseSchema = z.object({
 
 // StandardNodeRef / flattenStandardNodes は lib/kb/standardNodes.ts に移設済み。
 // nodeCoverage.ts (毎ターン軽量実行、LLM 非依存) がこのファイル経由で
-// openai モジュールを引き込まないようにするための切り出し。ここでは re-export のみ行う。
+// llm モジュールを引き込まないようにするための切り出し。ここでは re-export のみ行う。
 export { flattenStandardNodes };
 export type { StandardNodeRef };
 
@@ -169,12 +169,12 @@ export type DiffMatcher = (
   }>
 >;
 
-async function callOpenAIDiff(
+async function callLlmDiff(
   standardNodes: StandardNodeRef[],
   extractedSteps: SessionExtractedData["steps"],
   extractedExceptions: SessionExtractedData["exceptions"],
 ) {
-  const completion = await openai.chat.completions.parse({
+  const completion = await llm.chat.completions.parse({
     model: MODELS.extract,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
@@ -215,7 +215,7 @@ async function callOpenAIDiff(
  */
 export async function diffStandardVsExtracted(
   input: DiffInput,
-  matcher: DiffMatcher = callOpenAIDiff,
+  matcher: DiffMatcher = callLlmDiff,
 ): Promise<ExtractedGap[]> {
   if (!input.slug) return input.extracted.gaps;
   if (input.extracted.steps.length < MIN_STEPS_TO_DIFF) {

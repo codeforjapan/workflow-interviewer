@@ -337,7 +337,7 @@ export const MAIN_FLOW_COVERAGE_GATE = 0.8;
 /**
  * incidents スロットへのリスクブースト発火条件。
  * controller.ts (db/openai に依存し env 必須) ではなくここに置くことで、
- * DB モックや OPENAI_API_KEY 無しで検証スクリプトから直接テストできる。
+ * DB モックや OPENROUTER_API_KEY 無しで検証スクリプトから直接テストできる。
  *
  * cuesCount は risks.ts の RiskCue と gapCues.ts の GapCue を合算した件数
  * (UX2: どちらも「incidents スロットを埋めるための狙い撃ち質問素材」として同列に扱う)。

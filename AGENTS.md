@@ -40,15 +40,15 @@ git clone <リポジトリの URL>
 cd workflow-interviewer
 ```
 
-### 0-2. OpenAI API キーの取得（費用がかかります）
+### 0-2. OpenRouter API キーの取得（費用がかかります）
 
-このアプリは OpenAI の API を使います。利用には API キー（パスワードのようなもの）が必要で、使用量に応じて費用が発生します。
+このアプリは OpenRouter 経由で AI（既定では Google の Gemini）を使います。利用には API キー（パスワードのようなもの）が必要で、使用量に応じて費用が発生します。
 
-1. https://platform.openai.com/api-keys をブラウザで開く
-2. 「Sign up」または「Log in」でアカウント作成・ログイン
-3. 「Billing」でクレジットカードを登録し、最低 $5 ほどチャージする（試験利用なら $5 で数ヶ月使える）
-4. 「API keys」→「Create new secret key」でキーを発行し、コピーする（一度しか表示されないので必ずメモ）
-5. キーは `sk-proj-...` のような形式
+1. https://openrouter.ai/keys をブラウザで開く
+2. 「Sign in」でアカウント作成・ログイン
+3. 「Credits」でクレジットカードを登録し、$5 ほどチャージする（安いモデルを使うので試験利用なら $5 で十分）
+4. 「Create Key」でキーを発行し、コピーする（一度しか表示されないので必ずメモ）
+5. キーは `sk-or-v1-...` のような形式
 
 ---
 
@@ -84,8 +84,11 @@ cp .env.example .env.local
 open -e .env.local   # Mac の TextEdit で開く
 ```
 
-`OPENAI_API_KEY=` の右側に API キー（`sk-proj-...`）を貼り付けて保存します。
+`OPENROUTER_API_KEY=` の右側に API キー（`sk-or-v1-...`）を貼り付けて保存します。
 キーが揃うまで次のステップには進まないこと。API キーの取得方法は「最初の一回だけ必要な準備 → 0-2」を参照。
+
+使う AI モデルを変えたい場合は `OPENROUTER_MODEL=` の行のコメント（先頭の `#`）を外し、
+https://openrouter.ai/models で選んだモデル名を書きます。省略時は `google/gemini-3.1-flash-lite` です。
 
 ### 3. 開発環境の起動
 
@@ -177,7 +180,9 @@ gh pr create --title "機能名" --body "変更の説明"
 
 | キー | 必須 | 誰が用意するか | 説明 |
 |------|------|--------------|------|
-| `OPENAI_API_KEY` | 必須 | 利用者 | AI 機能に使う OpenAI の API キー。https://platform.openai.com/api-keys で取得 |
+| `OPENROUTER_API_KEY` | 必須 | 利用者 | AI 機能に使う OpenRouter の API キー。https://openrouter.ai/keys で取得 |
+| `OPENROUTER_MODEL` | 任意 | 利用者 | 使う AI モデル名。省略時は `google/gemini-3.1-flash-lite`。一覧は https://openrouter.ai/models |
+| `OPENROUTER_MODEL_EXTRACT` / `OPENROUTER_MODEL_CHAT` | 任意 | 利用者 | 情報抽出用・会話生成用で別モデルにしたいときだけ設定 |
 | `DATABASE_URL` | 必須 | 自動（docker compose が設定） | データベースの接続先。docker compose 使用時は変更不要 |
 
 ---
@@ -201,10 +206,15 @@ docker compose down -v   # データも含めて全部消去
 docker compose up -d     # 新しく起動（マイグレーションも自動適用）
 ```
 
-### OPENAI_API_KEY が設定されていない
+### OPENROUTER_API_KEY が設定されていない
 
 **症状**: チャットを送ると「Error: API key not configured」などのエラーが出る  
-**対処**: `.env.local` を開いて `OPENAI_API_KEY=sk-...` の形で設定してから `docker compose down && docker compose up -d` で再起動する
+**対処**: `.env.local` を開いて `OPENROUTER_API_KEY=sk-or-v1-...` の形で設定してから `docker compose down && docker compose up -d` で再起動する
+
+### モデル名が間違っている
+
+**症状**: チャットを送ると 400 エラーや「model not found」が出る  
+**対処**: `.env.local` の `OPENROUTER_MODEL` を https://openrouter.ai/models にあるモデル名（`提供元/モデル名` の形式）に直し、`docker compose down && docker compose up -d` で再起動する
 
 ### コンテナのログを見たい
 
