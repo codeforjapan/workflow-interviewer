@@ -8,42 +8,76 @@ AI が業務についてヒアリングし、その場で React Flow キャン�
 ## スタック
 
 - Next.js 16 (App Router) / React 19 / Tailwind v4 / shadcn
-- Hono (`app/api/[[...route]]`) + Drizzle ORM + ローカル Supabase (Postgres)
+- Hono (`app/api/[[...route]]`) + Drizzle ORM + Postgres
 - OpenAI Structured Outputs (zod) で業務情報を抽出
 - @xyflow/react でフロー図を描画
 
-## セットアップ
+## Claude デスクトップ版で使う（非エンジニア向け）
 
-前提: Node 20+ / pnpm / Docker (Supabase ローカル用) / [Supabase CLI](https://supabase.com/docs/guides/cli)
+**このリポジトリを渡されたら、Claude に「セットアップして」と言うだけで環境が整います。**
+
+1. [Claude デスクトップ](https://claude.ai/download) をインストールしてログイン
+2. このリポジトリのフォルダを Claude に共有（ドラッグ＆ドロップ または「Add files」）
+3. 「セットアップして」と送信 → Claude が手順を案内してくれます
+
+Claude はコマンドを提示するので、それを Mac の「ターミナル」アプリに貼り付けて実行してください。
+
+> ターミナルの開き方: Spotlight（Cmd+Space）→「ターミナル」と入力 → Enter
+
+機能開発は「〇〇機能を作って」と言えば Claude が対応します。
+
+---
+
+## セットアップ（手動でやる場合）
+
+**前提: [Docker Desktop](https://www.docker.com/products/docker-desktop/) のみ**（Node / pnpm / Supabase CLI は不要）
+
+### 1. リポジトリを取得
 
 ```bash
-pnpm install
+git clone <このリポジトリの URL>
+cd workflow-interviewer
+```
 
-# ローカル Supabase を起動 (初回はイメージ pull で数分)
-supabase start
+### 2. 環境変数を設定
 
-# .env.local を作成
+```bash
 cp .env.example .env.local
-# OPENAI_API_KEY と、supabase status の Anon key を埋める
 ```
 
-`DATABASE_URL` は `supabase status` の DB URL（デフォルトで `.env.example` の値と一致）。
+`.env.local` をテキストエディタで開き、`OPENAI_API_KEY=` の右側に API キーを貼り付ける。  
+キーは https://platform.openai.com/api-keys で取得できます。
 
-### マイグレーション適用
+### 3. 開発環境を起動
 
 ```bash
-pnpm db:migrate
+docker compose up -d
 ```
 
-（`.env.local` を自動で読み込む。別の DB に適用する場合は `DATABASE_URL="<接続文字列>" pnpm db:migrate`）
+初回はイメージのビルドと依存パッケージのインストールで **3〜10 分** かかります。  
+データベースのマイグレーションも自動で適用されます。
 
-### 開発サーバー起動
+### 4. 起動確認
+
+ブラウザで http://localhost:3000 を開く。または:
 
 ```bash
-pnpm dev
+curl http://localhost:3000/api/health
+# {"ok":true} が返れば完了
 ```
 
-[http://localhost:3000](http://localhost:3000) を開く。
+### 開発サーバーの停止
+
+```bash
+docker compose down
+```
+
+### DB をまるごとリセットしたいとき
+
+```bash
+docker compose down -v   # データも含めて削除
+docker compose up -d     # 新しく起動（マイグレーション自動適用）
+```
 
 ## 動作確認 (Sprint 0-1 受け入れシナリオ)
 
@@ -53,7 +87,6 @@ pnpm dev
 4. 各ターンで右側のキャンバスにノードが増えていく
 5. 5 問終わったら「完了して JSON 出力」ボタンが押せるようになる
 6. クリックで `session-{id}.json` がダウンロードされる
-7. Supabase Studio (`http://127.0.0.1:54323`) で `sessions` / `messages` テーブルを確認
 
 ## ディレクトリ
 
@@ -75,7 +108,7 @@ lib/
     interview/{questions,schema,extract,controller}.ts
     openai.ts
 drizzle/                            マイグレーション
-supabase/                           ローカル Supabase 設定
+docker-compose.yml                  ローカル開発環境 (app + postgres)
 ```
 
 ## デプロイ (Vercel + Supabase) — デモ用
