@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    env_file:
+      - .env.local
+    environment:
+      # Override DATABASE_URL to use the compose service name instead of localhost
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/postgres
+      NODE_ENV: development
+      # Enable filesystem polling so hot-reload works reliably inside Docker
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      # Bind-mount source so edits on the host are immediately visible
+      - .:/app
+      # Isolate node_modules and .next inside the container to avoid
+      # host/container platform conflicts
+      - app_node_modules:/app/node_modules
+      - app_next:/app/.next
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  app_node_modules:
+  app_next:
