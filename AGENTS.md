@@ -3,3 +3,218 @@
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
+
+---
+
+# エージェント向けランブック（非エンジニア対応）
+
+このプロジェクトの利用者は非エンジニアを想定しています。以下の手順をそのまま実行し、専門用語を避けた言葉で状況を報告しながら進めてください。
+
+---
+
+## Claude デスクトップ版を使っている場合の注意
+
+Claude デスクトップアプリ（claude.ai）はターミナルコマンドを**自動実行できません**。
+その場合は「このコマンドをターミナルに貼り付けて実行してください」と案内し、利用者にコピペしてもらいながら進めてください。
+
+ターミナルの開き方: Mac の場合は Spotlight（Cmd+Space）→「ターミナル」と入力 → Enter。
+
+---
+
+## 最初の一回だけ必要な準備（リポジトリを受け取ったとき）
+
+利用者が「はじめてこのプロジェクトを受け取った」状況では、以下の順に確認・案内してください。
+
+### 0. Git のインストール確認
+
+```bash
+git --version
+```
+
+見つからない場合: `brew install git`（Homebrew がない場合は https://brew.sh からインストールを案内）
+
+### 0-1. リポジトリの取得
+
+```bash
+git clone <リポジトリの URL>
+cd workflow-interviewer
+```
+
+### 0-2. OpenAI API キーの取得（費用がかかります）
+
+このアプリは OpenAI の API を使います。利用には API キー（パスワードのようなもの）が必要で、使用量に応じて費用が発生します。
+
+1. https://platform.openai.com/api-keys をブラウザで開く
+2. 「Sign up」または「Log in」でアカウント作成・ログイン
+3. 「Billing」でクレジットカードを登録し、最低 $5 ほどチャージする（試験利用なら $5 で数ヶ月使える）
+4. 「API keys」→「Create new secret key」でキーを発行し、コピーする（一度しか表示されないので必ずメモ）
+5. キーは `sk-proj-...` のような形式
+
+---
+
+## 「セットアップして」と言われたとき
+
+以下を **上から順番に** 実行します。途中で詰まった場合は利用者に状況を伝えて指示を仰いでください。
+
+### 1. Docker の確認
+
+```bash
+docker --version
+docker compose version
+docker info
+```
+
+- コマンドが見つからない場合（`command not found`）: 利用者に許可を取ってから以下を実行
+  ```bash
+  brew install --cask docker
+  open -a Docker
+  ```
+- `docker info` が「Cannot connect to the Docker daemon」を返す場合: Docker が起動していないので `open -a Docker` を実行し、1〜2 分待つ。
+
+### 2. 環境変数ファイルの準備
+
+```bash
+# .env.local がなければ作成
+cp .env.example .env.local
+```
+
+`.env.local` をテキストエディタで開きます:
+
+```bash
+open -e .env.local   # Mac の TextEdit で開く
+```
+
+`OPENAI_API_KEY=` の右側に API キー（`sk-proj-...`）を貼り付けて保存します。
+キーが揃うまで次のステップには進まないこと。API キーの取得方法は「最初の一回だけ必要な準備 → 0-2」を参照。
+
+### 3. 開発環境の起動
+
+```bash
+docker compose up -d
+```
+
+初回は Docker イメージのビルドと依存パッケージのインストールで数分かかります。
+
+### 4. 起動確認
+
+```bash
+curl -s http://localhost:3000/api/health
+```
+
+`{"ok":true}` が返ってきたら起動完了です。返ってこない場合はログを確認します:
+
+```bash
+docker compose logs -f app
+```
+
+### 5. 完了報告
+
+利用者に以下を伝えてください:
+
+> 「開発環境が起動しました。ブラウザで http://localhost:3000 を開いてください。」
+
+---
+
+## 「xx 機能を作って」と言われたとき（開発フロー）
+
+### ステップ 1: 作業ブランチを作る
+
+```bash
+git checkout -b feat/機能名-の-英語表記
+```
+
+→ 利用者へ:「作業用のブランチ（変更の保存場所）を作りました」
+
+### ステップ 2: コードを変更する
+
+実装を進めます。
+
+### ステップ 3: 動作確認
+
+開発サーバーが起動していなければ:
+```bash
+docker compose up -d
+```
+
+ブラウザで http://localhost:3000 を開いて動作確認する。ソースを編集すると自動でブラウザに反映されます。
+
+### ステップ 4: コード品質チェック
+
+```bash
+pnpm lint
+```
+
+エラーが出たら修正してから次へ進む。
+
+### ステップ 5: 変更を保存（コミット）
+
+```bash
+git add .
+git commit -m '変更内容を一言で説明するメッセージ'
+```
+
+→ 利用者へ:「変更を記録しました」
+
+### ステップ 6: GitHub へ送る
+
+```bash
+git push -u origin HEAD
+```
+
+→ 利用者へ:「変更を GitHub に送りました」
+
+### ステップ 7: プルリクエストを作成する
+
+```bash
+gh pr create --title "機能名" --body "変更の説明"
+```
+
+→ 利用者へ:「レビュー依頼（プルリクエスト）を作成しました。URL: 〇〇」
+
+---
+
+## 環境変数一覧
+
+| キー | 必須 | 誰が用意するか | 説明 |
+|------|------|--------------|------|
+| `OPENAI_API_KEY` | 必須 | 利用者 | AI 機能に使う OpenAI の API キー。https://platform.openai.com/api-keys で取得 |
+| `DATABASE_URL` | 必須 | 自動（docker compose が設定） | データベースの接続先。docker compose 使用時は変更不要 |
+
+---
+
+## よくある詰まりポイント
+
+### Docker が起動していない
+
+**症状**: `docker info` が `Cannot connect to the Docker daemon` を返す  
+**対処**: `open -a Docker` で Docker Desktop を起動し、メニューバーに Docker のアイコンが表示されるまで待つ（1〜2 分）
+
+### ポートが使用中
+
+**症状**: `docker compose up` が `bind: address already in use` で失敗する  
+**対処**: ポート 3000 または 5432 を使っているプロセスを停止する。または `docker compose down` してから再起動する
+
+### データベースをリセットしたい
+
+```bash
+docker compose down -v   # データも含めて全部消去
+docker compose up -d     # 新しく起動（マイグレーションも自動適用）
+```
+
+### OPENAI_API_KEY が設定されていない
+
+**症状**: チャットを送ると「Error: API key not configured」などのエラーが出る  
+**対処**: `.env.local` を開いて `OPENAI_API_KEY=sk-...` の形で設定してから `docker compose down && docker compose up -d` で再起動する
+
+### コンテナのログを見たい
+
+```bash
+docker compose logs -f app   # アプリのログをリアルタイム表示（Ctrl+C で終了）
+docker compose logs -f db    # データベースのログ
+```
+
+### アプリを停止したい
+
+```bash
+docker compose down
+```
